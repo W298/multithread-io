@@ -20,6 +20,19 @@ namespace ThreadSchedule
 		THREAD_TASK_COMPUTE
 	};
 
+	enum FileStatusType
+	{
+		FILE_STATUS_NON_ACCESS,
+		FILE_STATUS_HANDLE_CREATED,
+		FILE_STATUS_IOCP_CREATED,
+		FILE_STATUS_BUFFER_CREATED,
+		FILE_STATUS_READ_FILE_CALLED,
+		FILE_STATUS_COMPLETION_WAITING,
+		FILE_STATUS_READ_COMPLETED,
+		FILE_STATUS_COMPUTING,
+		FILE_STATUS_COMPUTE_COMPLETED
+	};
+
 	struct ReadCallTaskArgs
 	{
 		UINT FID;
@@ -36,7 +49,8 @@ namespace ThreadSchedule
 		UINT FID;
 	};
 
-	constexpr UINT g_threadCount = 4;
+	constexpr UINT g_threadCount = 8;
+	constexpr UINT g_exitCode = 99;
 
 	DWORD WINAPI ThreadFunc(LPVOID param);
 	void StartThreadTasks();

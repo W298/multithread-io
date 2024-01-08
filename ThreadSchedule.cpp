@@ -2,8 +2,6 @@
 #include "ThreadSchedule.h"
 #include "cvmarkersobj.h"
 
-#include <unordered_map>
-
 using namespace Concurrency::diagnostic;
 using namespace ThreadSchedule;
 
@@ -13,7 +11,7 @@ HANDLE g_threadIocpAry[g_threadCount];
 
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
-std::unordered_map<UINT, LPVOID> g_fileBufferMap;
+std::unordered_map<UINT, BYTE*> g_fileBufferMap;
 
 DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 {
@@ -24,8 +22,7 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 	ULONG_PTR key;
 	LPOVERLAPPED lpov;
 
-	int taskCnt = 3;
-	while (taskCnt > 0)
+	while (true)
 	{
 		workerSeries.write_alert(_T("Thread starts waiting task..."));
 		GetQueuedCompletionStatus(iocpHandle, &ret, &key, &lpov, INFINITE);
@@ -45,7 +42,7 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 			{
 				g_fileHandleMap[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, NULL);
 				g_fileIocpMap[fid] = CreateIoCompletionPort(g_fileHandleMap[fid], NULL, 0, g_threadCount);
-				g_fileBufferMap[fid] = VirtualAlloc(NULL, readCallTaskArgs->ByteSizeToRead, MEM_COMMIT, PAGE_READWRITE);
+				g_fileBufferMap[fid] = (BYTE*)VirtualAlloc(NULL, readCallTaskArgs->ByteSizeToRead, MEM_COMMIT, PAGE_READWRITE);
 			}
 
 			OVERLAPPED ov = { 0 };
@@ -65,11 +62,12 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 			span* s = new span(workerSeries, 1, _T("Completion Task"));
 			CompletionTaskArgs* completionTaskArgs = (CompletionTaskArgs*)lpov;
 
-			DWORD ret2;
-			ULONG_PTR key2;
-			LPOVERLAPPED lpov2;
+			DWORD fRet;
+			ULONG_PTR fKey;
+			LPOVERLAPPED fLpov;
+			GetQueuedCompletionStatus(g_fileIocpMap[completionTaskArgs->FID], &fRet, &fKey, &fLpov, INFINITE);
 
-			GetQueuedCompletionStatus(g_fileIocpMap[completionTaskArgs->FID], &ret2, &key2, &lpov2, INFINITE);
+			BYTE dependencyFileCount = g_fileBufferMap[completionTaskArgs->FID][0];
 
 			HeapFree(GetProcessHeap(), 0, completionTaskArgs);
 			
@@ -102,12 +100,15 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 			break;
 		}
 
+		case g_exitCode:
+		{
+			return 0;
+		}
+
 		default:
 			break;
 
 		}
-
-		taskCnt--;
 	}
 
 	return 0;
@@ -143,7 +144,7 @@ void ThreadSchedule::StartThreadTasks()
 			readCallTaskArgs->FID = t;
 			readCallTaskArgs->ByteSizeToRead = 1024;
 
-			if (PostQueuedCompletionStatus(g_threadIocpAry[t], sizeof(ReadCallTaskArgs), THREAD_TASK_READ_CALL, (LPOVERLAPPED)readCallTaskArgs) == FALSE)
+			if (PostQueuedCompletionStatus(g_threadIocpAry[t], 0, THREAD_TASK_READ_CALL, (LPOVERLAPPED)readCallTaskArgs) == FALSE)
 			{
 				ExitProcess(9);
 			}
@@ -153,7 +154,7 @@ void ThreadSchedule::StartThreadTasks()
 			CompletionTaskArgs* completionTaskArgs = (CompletionTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(CompletionTaskArgs));
 			completionTaskArgs->FID = t;
 
-			if (PostQueuedCompletionStatus(g_threadIocpAry[t], sizeof(ReadCallTaskArgs), THREAD_TASK_COMPLETION, (LPOVERLAPPED)completionTaskArgs) == FALSE)
+			if (PostQueuedCompletionStatus(g_threadIocpAry[t], 0, THREAD_TASK_COMPLETION, (LPOVERLAPPED)completionTaskArgs) == FALSE)
 			{
 				ExitProcess(9);
 			}
@@ -163,7 +164,14 @@ void ThreadSchedule::StartThreadTasks()
 			ComputeTaskArgs* computeTaskArgs = (ComputeTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ComputeTaskArgs));
 			computeTaskArgs->FID = t;
 
-			if (PostQueuedCompletionStatus(g_threadIocpAry[t], sizeof(ReadCallTaskArgs), THREAD_TASK_COMPUTE, (LPOVERLAPPED)computeTaskArgs) == FALSE)
+			if (PostQueuedCompletionStatus(g_threadIocpAry[t], 0, THREAD_TASK_COMPUTE, (LPOVERLAPPED)computeTaskArgs) == FALSE)
+			{
+				ExitProcess(9);
+			}
+		}
+
+		{
+			if (PostQueuedCompletionStatus(g_threadIocpAry[t], 0, g_exitCode, NULL) == FALSE)
 			{
 				ExitProcess(9);
 			}
