@@ -23,33 +23,35 @@ namespace ThreadSchedule
 	enum FileStatusType
 	{
 		FILE_STATUS_NON_ACCESS,
-		FILE_STATUS_HANDLE_CREATED,
-		FILE_STATUS_IOCP_CREATED,
-		FILE_STATUS_BUFFER_CREATED,
 		FILE_STATUS_READ_FILE_CALLED,
-		FILE_STATUS_COMPLETION_WAITING,
 		FILE_STATUS_READ_COMPLETED,
-		FILE_STATUS_COMPUTING,
 		FILE_STATUS_COMPUTE_COMPLETED
 	};
 
-	struct ReadCallTaskArgs
-	{
-		UINT FID;
-		size_t ByteSizeToRead;
-	};
-
-	struct CompletionTaskArgs
+	struct ThreadTaskArgs
 	{
 		UINT FID;
 	};
 
-	struct ComputeTaskArgs
+	class FileLock
 	{
-		UINT FID;
+	public:
+		HANDLE sem1;
+		HANDLE sem2;
+		HANDLE sem3;
+		UINT status;
+
+		FileLock() = default;
+		FileLock(UINT fid)
+		{
+			status = FILE_STATUS_NON_ACCESS;
+			sem1 = CreateSemaphoreW(NULL, 1, 1, (std::to_wstring(fid) + L"-sem1").c_str());
+			sem2 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem2").c_str());
+			sem3 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem3").c_str());
+		}
 	};
 
-	constexpr UINT g_threadCount = 8;
+	constexpr UINT g_threadCount = 3;
 	constexpr UINT g_exitCode = 99;
 
 	DWORD WINAPI ThreadFunc(LPVOID param);
