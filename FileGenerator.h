@@ -9,6 +9,6 @@ namespace FileGenerator
 		FILE_DEPENDENCY_NEED_COMPUTE
 	};
 
-	UINT GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT minByte, const UINT maxByte);
+	UINT64 GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte);
 	void RemoveDummyFiles();
 }

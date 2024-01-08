@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Thread
+namespace ThreadSchedule
 {
 	enum ThreadType
 	{
@@ -22,12 +22,21 @@ namespace Thread
 
 	struct ReadCallTaskArgs
 	{
-		HANDLE FileHandle;
-		LPCWSTR FileName;
+		UINT FID;
 		size_t ByteSizeToRead;
 	};
 
-	constexpr UINT g_threadCount = 8;
+	struct CompletionTaskArgs
+	{
+		UINT FID;
+	};
+
+	struct ComputeTaskArgs
+	{
+		UINT FID;
+	};
+
+	constexpr UINT g_threadCount = 4;
 
 	DWORD WINAPI ThreadFunc(LPVOID param);
 	void StartThreadTasks();

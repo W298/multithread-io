@@ -1,12 +1,12 @@
 #include "pch.h"
 #include "FileGenerator.h"
 
-UINT g_totalFileCount = 0;
+UINT64 g_totalFileCount = 0;
 
-UINT FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT minByte, const UINT maxByte)
+UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte)
 {
-	UINT totalFileCount = 0;
-	for (int i = 0; i < depth; i++)
+	UINT64 totalFileCount = 0;
+	for (UINT i = 0; i < depth; i++)
 		totalFileCount += fileCountAry[i];
 
 	g_totalFileCount = totalFileCount;
@@ -23,23 +23,23 @@ UINT FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAr
 	std::normal_distribution normalDist(4096.0, 51200.0);
 
 	UINT fidOffset = 0;
-	for (int d = 0; d < depth; d++)
+	for (UINT curDepth = 0; curDepth < depth; curDepth++)
 	{
-		for (int fid = fidOffset; fid < fidOffset + fileCountAry[d]; fid++)
+		for (UINT fid = fidOffset; fid < fidOffset + fileCountAry[curDepth]; fid++)
 		{
 			// File creation.
-			const UINT fileByteSize = max(minByte, min(maxByte, round(abs(normalDist(generator)))));
+			const UINT64 fileByteSize = max(minByte, min(maxByte, round(abs(normalDist(generator)))));
 			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, 0, NULL);
 
 			std::cout << "FID:" << fid << "\t" << fileByteSize << "\n";
 
-			if (d < depth - 1) // Exclude leaf file.
+			if (curDepth < depth - 1) // Exclude leaf file.
 			{
 				// File dependency define.
 				std::vector<std::pair<UINT, BYTE>> dependencyVec;
-				for (int off = 0; off < fileCountAry[d + 1]; off++)
+				for (UINT off = 0; off < fileCountAry[curDepth + 1]; off++)
 				{
-					const UINT dependencyFID = fidOffset + fileCountAry[d] + off;
+					const UINT dependencyFID = fidOffset + fileCountAry[curDepth] + off;
 					const BYTE fileDependency = uniformIntDist(generator);
 
 					if (fileDependency != 0)
@@ -51,7 +51,7 @@ UINT FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAr
 				memcpy(buffer, &dependencyPairCount, sizeof(UINT));
 
 				// Write dependency to file.
-				for (int i = 0; i < dependencyVec.size(); i++)
+				for (UINT i = 0; i < dependencyVec.size(); i++)
 				{
 					const UINT dependencyFID = dependencyVec[i].first;
 					const BYTE fileDependency = dependencyVec[i].second;
@@ -73,14 +73,14 @@ UINT FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAr
 			}
 		}
 
-		fidOffset += fileCountAry[d];
+		fidOffset += fileCountAry[curDepth];
 	}
 
 	// Release memory.
-	for (int f = 0; f < totalFileCount; f++)
+	for (UINT64 fid = 0; fid < totalFileCount; fid++)
 	{
-		if (handleAry[f] != INVALID_HANDLE_VALUE)
-			CloseHandle(handleAry[f]);
+		if (handleAry[fid] != INVALID_HANDLE_VALUE)
+			CloseHandle(handleAry[fid]);
 	}
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	delete[] handleAry;
@@ -90,10 +90,10 @@ UINT FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAr
 
 void FileGenerator::RemoveDummyFiles()
 {
-	for (int f = 0; f < g_totalFileCount; f++)
+	for (UINT fid = 0; fid < g_totalFileCount; fid++)
 	{
 		std::wstring path = L"dummy\\";
-		DeleteFileW((path + std::to_wstring(f)).c_str());
+		DeleteFileW((path + std::to_wstring(fid)).c_str());
 	}
 	RemoveDirectoryW(L"dummy");
 }
