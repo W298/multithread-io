@@ -22,10 +22,15 @@ namespace ThreadSchedule
 
 	enum FileStatusType
 	{
-		FILE_STATUS_NON_ACCESS,
-		FILE_STATUS_READ_FILE_CALLED,
-		FILE_STATUS_READ_COMPLETED,
-		FILE_STATUS_COMPUTE_COMPLETED
+		FILE_STATUS_READ_CALL_TASK_WAITING,
+		FILE_STATUS_READ_CALL_TASK_STARTED,
+		FILE_STATUS_READ_CALL_TASK_COMPLETED,
+		FILE_STATUS_COMPLETION_TASK_WAITING,
+		FILE_STATUS_COMPLETION_TASK_STARTED,
+		FILE_STATUS_COMPLETION_TASK_COMPLETED,
+		FILE_STATUS_COMPUTE_TASK_WAITING,
+		FILE_STATUS_COMPUTE_TASK_STARTED,
+		FILE_STATUS_COMPUTE_TASK_COMPLTED
 	};
 
 	struct ThreadTaskArgs
@@ -44,7 +49,7 @@ namespace ThreadSchedule
 		FileLock() = default;
 		FileLock(UINT fid)
 		{
-			status = FILE_STATUS_NON_ACCESS;
+			status = FILE_STATUS_READ_CALL_TASK_WAITING;
 			sem1 = CreateSemaphoreW(NULL, 1, 1, (std::to_wstring(fid) + L"-sem1").c_str());
 			sem2 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem2").c_str());
 			sem3 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem3").c_str());
@@ -54,6 +59,8 @@ namespace ThreadSchedule
 	constexpr UINT g_threadCount = 3;
 	constexpr UINT g_exitCode = 99;
 
+	void ComputeFunc(double timeOverMiliseconds);
 	DWORD WINAPI ThreadFunc(LPVOID param);
+	void HeavyComputeFunc(UINT);
 	void StartThreadTasks();
 }

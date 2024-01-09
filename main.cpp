@@ -12,7 +12,7 @@ int main()
 
 	StartThreadTasks();
 
-	// RemoveDummyFiles();
+	RemoveDummyFiles();
 
 	return 0;
 }

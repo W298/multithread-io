@@ -1,10 +1,15 @@
 #include "pch.h"
 #include "FileGenerator.h"
 
+using namespace Concurrency::diagnostic;
+
 UINT64 g_totalFileCount = 0;
 
 UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte)
 {
+	marker_series mainThreadSeries(_T("Main Thread - FileGenerator"));
+	span* s = new span(mainThreadSeries, 0, _T("File Generation"));
+
 	UINT64 totalFileCount = 0;
 	for (UINT i = 0; i < depth; i++)
 		totalFileCount += fileCountAry[i];
@@ -85,6 +90,7 @@ UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCount
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	delete[] handleAry;
 
+	delete s;
 	return totalFileCount;
 }
 

@@ -7,4 +7,6 @@
 #include <string>
 #include <unordered_map>
 
+#include "cvmarkersobj.h"
+
 #endif // PCH_H

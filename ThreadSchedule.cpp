@@ -1,6 +1,5 @@
 #include "pch.h"
 #include "ThreadSchedule.h"
-#include "cvmarkersobj.h"
 
 using namespace Concurrency::diagnostic;
 using namespace ThreadSchedule;
@@ -13,6 +12,37 @@ std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
 std::unordered_map<UINT, BYTE*> g_fileBufferMap;
 std::unordered_map<UINT, FileLock> g_fileLockMap;
+
+void ThreadSchedule::ComputeFunc(double timeOverMicroSeconds)
+{
+	LARGE_INTEGER freq, start, end;
+	double elapsedMicroSeconds = 0.0;
+	
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&start);
+
+	while (elapsedMicroSeconds <= timeOverMicroSeconds)
+	{
+		int num = 1, primes = 0;
+		for (num = 1; num <= 5; num++) {			
+			int i = 2;
+			while (i <= num) {
+				QueryPerformanceCounter(&end);
+				elapsedMicroSeconds = ((double)(end.QuadPart - start.QuadPart) / freq.QuadPart) * 1000.0 * 1000.0;
+				if (elapsedMicroSeconds > timeOverMicroSeconds)
+					return;
+				
+				if (num % i == 0)
+					break;
+				i++;
+			}
+			if (i == num)
+				primes++;
+		}
+	}
+
+	return;
+}
 
 DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 {
@@ -39,13 +69,45 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 
 		case THREAD_TASK_READ_CALL:
 		{
+			// [VARIABLE]
 			DWORD waitResult = WaitForSingleObject(g_fileLockMap[fid].sem1, 0L);
-			if (waitResult == WAIT_TIMEOUT)
+			if (waitResult == WAIT_TIMEOUT)	// If failed to get lock...
 			{
-				workerSeries.write_flag(2, _T("Task Ignored"));
-				break;
+				switch (g_fileLockMap[fid].status)
+				{
+
+				case FILE_STATUS_READ_CALL_TASK_WAITING:
+					// Someone takes lock, but status is not updated yet.
+					// It must be FILE_STATUS_READ_CALL_TASK_STARTED.
+					// So do the same task as FILE_STATUS_READ_CALL_TASK_STARTED.
+				case FILE_STATUS_READ_CALL_TASK_STARTED:
+					// Read call task is running.
+				case FILE_STATUS_READ_CALL_TASK_COMPLETED:
+					// Read call task is already completed. But lock is not released yet.
+				case FILE_STATUS_COMPLETION_TASK_WAITING:
+					// Completion task does not exist.
+				case FILE_STATUS_COMPLETION_TASK_STARTED:
+					// Completion task is running.
+				case FILE_STATUS_COMPLETION_TASK_COMPLETED:
+					// Completion task is already completed. But lock is not released yet.
+				case FILE_STATUS_COMPUTE_TASK_WAITING:
+					// Compute task does not exist.
+				case FILE_STATUS_COMPUTE_TASK_STARTED:
+					// Compute task is running.
+				case FILE_STATUS_COMPUTE_TASK_COMPLTED:
+					// Compute task is already completed. Currently we'll not release locks.
+					break;
+				}
+
+				if (waitResult == WAIT_TIMEOUT)
+					break;
 			}
-			span* s = new span(workerSeries, 0, _T("Read Call Task"));
+			
+			// FILE_STATUS_READ_CALL_TASK_WAITING -> FILE_STATUS_READ_CALL_TASK_STARTED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_READ_CALL_TASK_WAITING -> FILE_STATUS_READ_CALL_TASK_STARTED"));
+			
+			span* s = new span(workerSeries, 2, _T("Read Call Task"));
 			{
 				const std::wstring path = L"dummy\\";
 				LARGE_INTEGER fileByteSize;
@@ -68,19 +130,66 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 				{
 					ExitProcess(-1);
 				}
-
-				InterlockedIncrement(&g_fileLockMap[fid].status);	// FILE_STATUS_NON_ACCESS -> FILE_STATUS_READ_FILE_CALLED
-				workerSeries.write_flag(3, _T("FILE_STATUS_READ_FILE_CALLED"));
 			}
 			delete s;
+
+			// FILE_STATUS_READ_CALL_TASK_STARTED -> FILE_STATUS_READ_CALL_TASK_COMPLETED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_READ_CALL_TASK_STARTED -> FILE_STATUS_READ_CALL_TASK_COMPLETED"));
+
 			ReleaseSemaphore(g_fileLockMap[fid].sem2, 1, NULL);
+			
+			// FILE_STATUS_READ_CALL_TASK_COMPLETED -> FILE_STATUS_COMPLETION_TASK_WAITING
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_READ_CALL_TASK_COMPLETED -> FILE_STATUS_COMPLETION_TASK_WAITING"));
 			break;
 		}
 
 		case THREAD_TASK_COMPLETION:
 		{
-			WaitForSingleObject(g_fileLockMap[fid].sem2, INFINITE);
-			span* s = new span(workerSeries, 1, _T("Completion Task"));
+			// [VARIABLE]
+			DWORD waitResult = WaitForSingleObject(g_fileLockMap[fid].sem2, 0L);
+			if (waitResult == WAIT_TIMEOUT) // If failed to get lock...
+			{
+				switch (g_fileLockMap[fid].status)
+				{
+				case FILE_STATUS_READ_CALL_TASK_WAITING:
+					// Read call task does not exist.
+				case FILE_STATUS_READ_CALL_TASK_STARTED:
+					// Read call task is running.
+				case FILE_STATUS_READ_CALL_TASK_COMPLETED:
+					// Read call task is already completed. But lock is not released yet.
+					
+					// 1. Wait read call task is completed.
+					waitResult = WaitForSingleObject(g_fileLockMap[fid].sem2, INFINITE);
+					break;
+
+				case FILE_STATUS_COMPLETION_TASK_WAITING:
+					// Someone takes lock, but status is not updated yet.
+					// It must be FILE_STATUS_COMPLETION_TASK_STARTED.
+					// So do the same job as FILE_STATUS_COMPLETION_TASK_STARTED.
+				case FILE_STATUS_COMPLETION_TASK_STARTED:
+					// Completion task is running.
+				case FILE_STATUS_COMPLETION_TASK_COMPLETED:
+					// Completion task is already completed. But lock is not released yet.
+				case FILE_STATUS_COMPUTE_TASK_WAITING:
+					// Compute task dose not exist.
+				case FILE_STATUS_COMPUTE_TASK_STARTED:
+					// Compute task is running.
+				case FILE_STATUS_COMPUTE_TASK_COMPLTED:
+					// Compute task is already completed. Currently we'll not release locks.
+					break;
+				}
+
+				if (waitResult == WAIT_TIMEOUT)
+					break;
+			}
+
+			// FILE_STATUS_COMPLETION_TASK_WAITING -> FILE_STATUS_COMPLETION_TASK_STARTED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_COMPLETION_TASK_WAITING -> FILE_STATUS_COMPLETION_TASK_STARTED"));
+
+			span* s = new span(workerSeries, 3, _T("Completion Task"));
 			{
 				DWORD fRet;
 				ULONG_PTR fKey;
@@ -88,38 +197,76 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 				GetQueuedCompletionStatus(g_fileIocpMap[fid], &fRet, &fKey, &fLpov, INFINITE);
 
 				BYTE dependencyFileCount = g_fileBufferMap[fid][0];
-
-				InterlockedIncrement(&g_fileLockMap[fid].status);	// FILE_STATUS_READ_FILE_CALLED -> FILE_STATUS_READ_COMPLETED
-				workerSeries.write_flag(3, _T("FILE_STATUS_READ_COMPLETED"));
 			}
 			delete s;
+
+			// FILE_STATUS_COMPLETION_TASK_STARTED -> FILE_STATUS_COMPLETION_TASK_COMPLETED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_COMPLETION_TASK_STARTED -> FILE_STATUS_COMPLETION_TASK_COMPLETED"));
+
 			ReleaseSemaphore(g_fileLockMap[fid].sem3, 1, NULL);
+
+			// FILE_STATUS_COMPLETION_TASK_COMPLETED -> FILE_STATUS_COMPUTE_TASK_WAITING
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_COMPLETION_TASK_COMPLETED -> FILE_STATUS_COMPUTE_TASK_WAITING"));
 			break;
 		}
 
 		case THREAD_TASK_COMPUTE:
 		{
-			WaitForSingleObject(g_fileLockMap[fid].sem3, INFINITE);
-			span* s = new span(workerSeries, 2, _T("Compute Task"));
+			// [VARIABLE]
+			DWORD waitResult = WaitForSingleObject(g_fileLockMap[fid].sem3, 0L);
+			if (waitResult == WAIT_TIMEOUT) // If failed to get lock...
 			{
-				// Compute Processing.
+				switch (g_fileLockMap[fid].status)
 				{
-					float number = 1.5;
-					while (number <= 200000000.0)
-					{
-						number *= number;
-					}
+				case FILE_STATUS_READ_CALL_TASK_WAITING:
+					// Read call task does not exist. Completion task cannot exist also.
+				case FILE_STATUS_READ_CALL_TASK_STARTED:
+					// Read call task is running.
+				case FILE_STATUS_READ_CALL_TASK_COMPLETED:
+					// Read call task is already completed. But lock is not released yet.
+				case FILE_STATUS_COMPLETION_TASK_WAITING:
+					// Completion task does not exist.
+				case FILE_STATUS_COMPLETION_TASK_STARTED:
+					// Completion task is running.
+				case FILE_STATUS_COMPLETION_TASK_COMPLETED:
+					// Completion task is already completed. But lock is not released yet.
+					
+					// 1. Wait read call/completion task is completed.
+					waitResult = WaitForSingleObject(g_fileLockMap[fid].sem3, INFINITE);
+					break;
+
+				case FILE_STATUS_COMPUTE_TASK_WAITING:
+					// Someone takes lock, but status is not updated yet.
+					// It must be FILE_STATUS_COMPUTE_TASK_STARTED.
+					// So do the same task as FILE_STATUS_COMPUTE_TASK_STARTED.
+				case FILE_STATUS_COMPUTE_TASK_STARTED:
+					// Compute task is running.
+				case FILE_STATUS_COMPUTE_TASK_COMPLTED:
+					// Compute task is already completed. Currently we'll not release locks.
+					break;
 				}
 
-				// Optional!!
-				VirtualFree(g_fileBufferMap[fid], 1024, MEM_RELEASE);
-				CloseHandle(g_fileIocpMap[fid]);
-				CloseHandle(g_fileHandleMap[fid]);
+				if (waitResult == WAIT_TIMEOUT)
+					break;
+			}
 
-				InterlockedIncrement(&g_fileLockMap[fid].status);	// FILE_STATUS_READ_COMPLETED -> FILE_STATUS_COMPUTE_COMPLETED
-				workerSeries.write_flag(3, _T("FILE_STATUS_COMPUTE_COMPLETED"));
+			// FILE_STATUS_COMPUTE_TASK_WAITING -> FILE_STATUS_COMPUTE_TASK_STARTED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_COMPUTE_TASK_WAITING -> FILE_STATUS_COMPUTE_TASK_STARTED"));
+
+			span* s = new span(workerSeries, 4, _T("Compute Task"));
+			{
+				// Compute.
+				ComputeFunc(100.0);
 			}
 			delete s;
+
+			// FILE_STATUS_COMPUTE_TASK_STARTED -> FILE_STATUS_COMPUTE_TASK_COMPLTED
+			InterlockedIncrement(&g_fileLockMap[fid].status);
+			workerSeries.write_flag(5, _T("FILE_STATUS_COMPUTE_TASK_STARTED -> FILE_STATUS_COMPUTE_TASK_COMPLTED"));
+
 			break;
 		}
 
@@ -136,7 +283,7 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 
 void ThreadSchedule::StartThreadTasks()
 {
-	marker_series mainThreadSeries(_T("Main Thread"));
+	marker_series mainThreadSeries(_T("Main Thread - ThreadSchedule"));
 
 	g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_threadCount);
 
@@ -155,47 +302,51 @@ void ThreadSchedule::StartThreadTasks()
 		g_threadHandleAry[t] = tHandle;
 	}
 
-	// Create root file status objects.
+	// [VARIABLE] Create root file status objects.
 	{
 		g_fileLockMap[0] = FileLock(0);
 	}
 
-	// Send tasks to threads.
-	span* sendSpan = new span(mainThreadSeries, _T("Send Tasks"));
+	// [VARIABLE] #Scenario. Main thread assign threads what to do.
+	span* sendSpan = new span(mainThreadSeries, 1, _T("Send Tasks"));
 	{
-		ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
-		args->FID = 0;
-
-		if (PostQueuedCompletionStatus(g_threadIocpAry[0], 0, THREAD_TASK_READ_CALL, (LPOVERLAPPED)args) == FALSE)
 		{
-			ExitProcess(9);
+			ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
+			args->FID = 0;
+
+			if (PostQueuedCompletionStatus(g_threadIocpAry[0], 0, THREAD_TASK_READ_CALL, (LPOVERLAPPED)args) == FALSE)
+			{
+				ExitProcess(9);
+			}
 		}
-	}
-	{
-		ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
-		args->FID = 0;
-
-		if (PostQueuedCompletionStatus(g_threadIocpAry[1], 0, THREAD_TASK_COMPLETION, (LPOVERLAPPED)args) == FALSE)
 		{
-			ExitProcess(9);
+			ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
+			args->FID = 0;
+
+			if (PostQueuedCompletionStatus(g_threadIocpAry[1], 0, THREAD_TASK_COMPLETION, (LPOVERLAPPED)args) == FALSE)
+			{
+				ExitProcess(9);
+			}
 		}
-	}
-	{
-		ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
-		args->FID = 0;
-
-		if (PostQueuedCompletionStatus(g_threadIocpAry[2], 0, THREAD_TASK_COMPUTE, (LPOVERLAPPED)args) == FALSE)
 		{
-			ExitProcess(9);
+			ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
+			args->FID = 0;
+
+			if (PostQueuedCompletionStatus(g_threadIocpAry[2], 0, THREAD_TASK_COMPUTE, (LPOVERLAPPED)args) == FALSE)
+			{
+				ExitProcess(9);
+			}
 		}
-	}
-	{
-		ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
-		args->FID = 0;
-
-		if (PostQueuedCompletionStatus(g_threadIocpAry[0], 0, THREAD_TASK_READ_CALL, (LPOVERLAPPED)args) == FALSE)
+		Sleep(1000);
+		// After all task is done, trying to access the file.
 		{
-			ExitProcess(9);
+			ThreadTaskArgs* args = (ThreadTaskArgs*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ThreadTaskArgs));
+			args->FID = 0;
+
+			if (PostQueuedCompletionStatus(g_threadIocpAry[0], 0, THREAD_TASK_READ_CALL, (LPOVERLAPPED)args) == FALSE)
+			{
+				ExitProcess(9);
+			}
 		}
 	}
 	delete sendSpan;
@@ -210,6 +361,13 @@ void ThreadSchedule::StartThreadTasks()
 	}
 
 	WaitForMultipleObjects(g_threadCount, g_threadHandleAry, TRUE, INFINITE);
+
+	// [VARIABLE] Release cached datas.
+	{
+		VirtualFree(g_fileBufferMap[0], 1024, MEM_RELEASE);
+		CloseHandle(g_fileIocpMap[0]);
+		CloseHandle(g_fileHandleMap[0]);
+	}
 
 	for (int t = 0; t < g_threadCount; t++)
 	{
