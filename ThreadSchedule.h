@@ -58,8 +58,7 @@ namespace ThreadSchedule
 		}
 	};
 
-	constexpr UINT g_testFileCount = 250;
-	constexpr UINT g_threadCount = 4;
+	constexpr UINT g_threadCount = 8;
 	constexpr UINT g_taskRemoveCount = 10;
 	constexpr UINT g_exitCode = 99;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
@@ -68,7 +67,7 @@ namespace ThreadSchedule
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
-	void ComputeTaskWork(double timeOverMiliseconds);
+	void ComputeTaskWork(UINT fid);
 
 	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType);
 	
@@ -78,5 +77,5 @@ namespace ThreadSchedule
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
 	void PostThreadExit(UINT t);
 
-	void StartThreadTasks();
+	void StartThreadTasks(UINT totalFileCount);
 }

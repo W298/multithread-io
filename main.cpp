@@ -7,12 +7,15 @@ using namespace ThreadSchedule;
 
 int main()
 {
-	const UINT fileCountAry[5] = { 50u, 50u, 50u, 50u, 50u };
-	GenerateDummyFiles(5u, fileCountAry, 512u, 1048576u, 4096u, 51200u);
+	FileSizeArgs fileSize = FileSizeArgs(512u, 1048576u, 4096u, 51200u);
+	FileComputeArgs fileCompute = FileComputeArgs(50u, 5000u, 400u, 400u);
+	FileDependencyArgs fileDep = FileDependencyArgs(FILE_DEPENDENCY_PYRAMID, 4u, 4u);
+	FileGenerationArgs fArgs = FileGenerationArgs(fileSize, fileCompute, fileDep);
+	UINT64 totalFileCount = GenerateDummyFiles(fArgs);
 
-	StartThreadTasks();
+	StartThreadTasks(totalFileCount);
 
-	RemoveDummyFiles();
+	RemoveDummyFiles(totalFileCount);
 
 	return 0;
 }

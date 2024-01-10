@@ -3,46 +3,52 @@
 
 using namespace Concurrency::diagnostic;
 
-UINT64 g_totalFileCount = 0;
-
-UINT64 FileGenerator::GenerateDummyFiles(
-	const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte, 
-	const UINT mean, const UINT variance)
+UINT64 FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 {
 	marker_series mainThreadSeries(_T("Main Thread - FileGenerator"));
 	span* s = new span(mainThreadSeries, 0, _T("File Generation"));
 
+	UINT* fileCountAry = new UINT[args.fileDep.treeDepth];
 	UINT64 totalFileCount = 0;
-	for (UINT i = 0; i < depth; i++)
-		totalFileCount += fileCountAry[i];
 
-	g_totalFileCount = totalFileCount;
+	UINT beforeDepthCount = 1u;
+	for (UINT i = 0; i < args.fileDep.treeDepth; i++)
+	{
+		fileCountAry[i] = beforeDepthCount * args.fileDep.treeMultiply;
+		totalFileCount += fileCountAry[i];
+		beforeDepthCount = fileCountAry[i];
+	}
 
 	CreateDirectoryW(L"dummy", NULL);
 	const std::wstring path = L"dummy\\";
 
 	HANDLE* handleAry = new HANDLE[totalFileCount];
-	BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, maxByte);
+	BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, args.fileSize.maxByte);
 
 	std::random_device rd;
 	std::mt19937 generator(rd());
 	std::uniform_int_distribution uniformIntDist(0, 2);
-	std::normal_distribution<double> normalDist(mean, variance);
+	std::normal_distribution<double> sizeNormalDist(args.fileSize.mean, args.fileSize.variance);
+	std::normal_distribution<double> computeNormalDist(args.fileCompute.mean, args.fileCompute.variance);
 
 	UINT fidOffset = 0;
-	for (UINT curDepth = 0; curDepth < depth; curDepth++)
+	for (UINT curDepth = 0; curDepth < args.fileDep.treeDepth; curDepth++)
 	{
 		for (UINT fid = fidOffset; fid < fidOffset + fileCountAry[curDepth]; fid++)
 		{
 			// File creation.
-			const UINT64 fileByteSize = max(minByte, min(maxByte, round(abs(normalDist(generator)))));
+			const UINT64 fileByteSize = max(args.fileSize.minByte, min(args.fileSize.maxByte, round(abs(sizeNormalDist(generator)))));
+			const UINT fileComputeTime = max(args.fileCompute.minMicroSeconds, min(args.fileCompute.maxMicroSeconds, round(abs(computeNormalDist(generator)))));
+			
 			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
 
-#ifdef PRINT_FILE_GEN
-			std::cout << "FID:" << fid << "\t" << fileByteSize << "\n";
-#endif
+			BYTE* writeAddress = buffer;
 
-			if (curDepth < depth - 1) // Exclude leaf file.
+			// Write compute time to file.
+			memcpy(writeAddress, &fileComputeTime, sizeof(UINT));
+			writeAddress += sizeof(UINT);
+
+			if (curDepth < args.fileDep.treeDepth - 1) // Exclude leaf file.
 			{
 				// File dependency define.
 				std::vector<std::pair<UINT, BYTE>> dependencyVec;
@@ -57,7 +63,8 @@ UINT64 FileGenerator::GenerateDummyFiles(
 
 				// Write dependency pair count to file.
 				const UINT dependencyPairCount = dependencyVec.size();
-				memcpy(buffer, &dependencyPairCount, sizeof(UINT));
+				memcpy(writeAddress, &dependencyPairCount, sizeof(UINT));
+				writeAddress += sizeof(UINT);
 
 				// Write dependency to file.
 				for (UINT i = 0; i < dependencyVec.size(); i++)
@@ -65,24 +72,20 @@ UINT64 FileGenerator::GenerateDummyFiles(
 					const UINT dependencyFID = dependencyVec[i].first;
 					const BYTE fileDependency = dependencyVec[i].second;
 
-#ifdef PRINT_FILE_GEN
-					std::cout << dependencyFID << "(" << (int)fileDependency << ")" << " ";
-#endif
-
-					BYTE* writeAddress = buffer + sizeof(UINT) + i * (sizeof(UINT) + sizeof(BYTE));
 					memcpy(writeAddress, &dependencyFID, sizeof(UINT));
-					memcpy(writeAddress + sizeof(UINT), &fileDependency, sizeof(BYTE));
+					writeAddress += sizeof(UINT);
+
+					memcpy(writeAddress, &fileDependency, sizeof(BYTE));
+					writeAddress += sizeof(BYTE);
 				}
-#ifdef PRINT_FILE_GEN
-				std::cout << "\n";
-#endif
 
 				WriteFile(handleAry[fid], buffer, fileByteSize, NULL, NULL);
-				ZeroMemory(buffer, sizeof(UINT) + dependencyVec.size() * (sizeof(UINT) + sizeof(BYTE)));
+				ZeroMemory(buffer, writeAddress - buffer);
 			}
 			else
 			{
 				WriteFile(handleAry[fid], buffer, fileByteSize, NULL, NULL);
+				ZeroMemory(buffer, writeAddress - buffer);
 			}
 		}
 
@@ -101,9 +104,9 @@ UINT64 FileGenerator::GenerateDummyFiles(
 	return totalFileCount;
 }
 
-void FileGenerator::RemoveDummyFiles()
+void FileGenerator::RemoveDummyFiles(UINT64 totalFileCount)
 {
-	for (UINT fid = 0; fid < g_totalFileCount; fid++)
+	for (UINT fid = 0; fid < totalFileCount; fid++)
 	{
 		std::wstring path = L"dummy\\";
 		DeleteFileW((path + std::to_wstring(fid)).c_str());

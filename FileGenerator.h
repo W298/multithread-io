@@ -1,7 +1,5 @@
 #pragma once
 
-// #define PRINT_FILE_GEN
-
 namespace FileGenerator
 {
 	enum FileDependencyType
@@ -11,8 +9,43 @@ namespace FileGenerator
 		FILE_DEPENDENCY_NEED_COMPUTE
 	};
 
-	UINT64 GenerateDummyFiles(
-		const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte, 
-		const UINT mean, const UINT variance);
-	void RemoveDummyFiles();
+	enum FileDependencyModel
+	{
+		FILE_DEPENDENCY_PYRAMID,
+		FILE_DEPENDENCY_REVERSE_PYRAMID,
+		FILE_DEPENDENCY_UNIFORM
+	};
+
+	struct FileSizeArgs
+	{
+		UINT64 minByte;
+		UINT64 maxByte;
+		UINT mean;
+		UINT variance;
+	};
+
+	struct FileComputeArgs
+	{
+		UINT minMicroSeconds;
+		UINT maxMicroSeconds;
+		UINT mean;
+		UINT variance;
+	};
+
+	struct FileDependencyArgs
+	{
+		FileDependencyModel model;
+		UINT treeDepth;
+		UINT treeMultiply;
+	};
+	
+	struct FileGenerationArgs
+	{
+		FileSizeArgs fileSize;
+		FileComputeArgs fileCompute;
+		FileDependencyArgs fileDep;
+	};
+
+	UINT64 GenerateDummyFiles(const FileGenerationArgs fileGenerationArgs);
+	void RemoveDummyFiles(UINT64 totalFileCount);
 }

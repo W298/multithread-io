@@ -59,14 +59,16 @@ void ThreadSchedule::CompletionTaskWork(UINT fid)
 	BYTE dependencyFileCount = g_fileBufferMap[fid][0];
 }
 
-void ThreadSchedule::ComputeTaskWork(double timeOverMicroSeconds)
+void ThreadSchedule::ComputeTaskWork(UINT fid)
 {
 	LARGE_INTEGER freq, start, end;
-	double elapsedMicroSeconds = 0.0;
-
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&start);
+	
+	UINT timeOverMicroSeconds;
+	memcpy(&timeOverMicroSeconds, g_fileBufferMap[fid], sizeof(UINT));
 
+	float elapsedMicroSeconds = 0.0f;
 	while (elapsedMicroSeconds <= timeOverMicroSeconds)
 	{
 		int num = 1, primes = 0;
@@ -74,7 +76,7 @@ void ThreadSchedule::ComputeTaskWork(double timeOverMicroSeconds)
 			int i = 2;
 			while (i <= num) {
 				QueryPerformanceCounter(&end);
-				elapsedMicroSeconds = ((double)(end.QuadPart - start.QuadPart) / freq.QuadPart) * 1000.0 * 1000.0;
+				elapsedMicroSeconds = ((float)(end.QuadPart - start.QuadPart) / freq.QuadPart) * 1000.0f * 1000.0f;
 				if (elapsedMicroSeconds > timeOverMicroSeconds)
 					return;
 
@@ -296,7 +298,7 @@ void ThreadSchedule::PostThreadExit(UINT t)
 		ExitProcess(9);
 }
 
-void ThreadSchedule::StartThreadTasks()
+void ThreadSchedule::StartThreadTasks(UINT totalFileCount)
 {
 	marker_series mainThreadSeries(_T("Main Thread - ThreadSchedule"));
 
@@ -318,18 +320,18 @@ void ThreadSchedule::StartThreadTasks()
 
 	// [VARIABLE] Create root file status objects.
 	{
-		for (int i = 0; i < g_testFileCount; i++)
+		for (int i = 0; i < totalFileCount; i++)
 			g_fileLockMap[i] = new FileLock(i);
 	}
 
 	// [VARIABLE] #Scenario. Main thread assign threads what to do.
 	span* s = new span(mainThreadSeries, 1, _T("Send Tasks"));
 	{
-		for (int i = 0; i < g_testFileCount; i++)
+		for (int i = 0; i < totalFileCount; i++)
 			PostThreadTask(i % g_threadCount, i, THREAD_TASK_READ_CALL);
-		for (int i = 0; i < g_testFileCount; i++)
+		for (int i = 0; i < totalFileCount; i++)
 			PostThreadTask(i % g_threadCount, i, THREAD_TASK_COMPLETION);
-		for (int i = 0; i < g_testFileCount; i++)
+		for (int i = 0; i < totalFileCount; i++)
 			PostThreadTask(i % g_threadCount, i, THREAD_TASK_COMPUTE);
 	}
 	delete s;
@@ -343,7 +345,7 @@ void ThreadSchedule::StartThreadTasks()
 
 	// [VARIABLE] Release cached datas.
 	{
-		for (int i = 0; i < g_testFileCount; i++)
+		for (int i = 0; i < totalFileCount; i++)
 		{
 			VirtualFree(g_fileBufferMap[i], 0, MEM_RELEASE);
 			CloseHandle(g_fileIocpMap[i]);
