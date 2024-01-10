@@ -5,7 +5,9 @@ using namespace Concurrency::diagnostic;
 
 UINT64 g_totalFileCount = 0;
 
-UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte)
+UINT64 FileGenerator::GenerateDummyFiles(
+	const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte, 
+	const UINT mean, const UINT variance)
 {
 	marker_series mainThreadSeries(_T("Main Thread - FileGenerator"));
 	span* s = new span(mainThreadSeries, 0, _T("File Generation"));
@@ -25,7 +27,7 @@ UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCount
 	std::random_device rd;
 	std::mt19937 generator(rd());
 	std::uniform_int_distribution uniformIntDist(0, 2);
-	std::normal_distribution normalDist(4096.0, 51200.0);
+	std::normal_distribution<double> normalDist(mean, variance);
 
 	UINT fidOffset = 0;
 	for (UINT curDepth = 0; curDepth < depth; curDepth++)
@@ -36,7 +38,9 @@ UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCount
 			const UINT64 fileByteSize = max(minByte, min(maxByte, round(abs(normalDist(generator)))));
 			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, 0, NULL);
 
+#ifdef PRINT_FILE_GEN
 			std::cout << "FID:" << fid << "\t" << fileByteSize << "\n";
+#endif
 
 			if (curDepth < depth - 1) // Exclude leaf file.
 			{
@@ -61,13 +65,17 @@ UINT64 FileGenerator::GenerateDummyFiles(const UINT depth, const UINT* fileCount
 					const UINT dependencyFID = dependencyVec[i].first;
 					const BYTE fileDependency = dependencyVec[i].second;
 
+#ifdef PRINT_FILE_GEN
 					std::cout << dependencyFID << "(" << (int)fileDependency << ")" << " ";
+#endif
 
 					BYTE* writeAddress = buffer + sizeof(UINT) + i * (sizeof(UINT) + sizeof(BYTE));
 					memcpy(writeAddress, &dependencyFID, sizeof(UINT));
 					memcpy(writeAddress + sizeof(UINT), &fileDependency, sizeof(BYTE));
 				}
+#ifdef PRINT_FILE_GEN
 				std::cout << "\n";
+#endif
 
 				WriteFile(handleAry[fid], buffer, fileByteSize, NULL, NULL);
 				ZeroMemory(buffer, sizeof(UINT) + dependencyVec.size() * (sizeof(UINT) + sizeof(BYTE)));

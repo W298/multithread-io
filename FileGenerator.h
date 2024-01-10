@@ -1,5 +1,7 @@
 #pragma once
 
+// #define PRINT_FILE_GEN
+
 namespace FileGenerator
 {
 	enum FileDependencyType
@@ -9,6 +11,8 @@ namespace FileGenerator
 		FILE_DEPENDENCY_NEED_COMPUTE
 	};
 
-	UINT64 GenerateDummyFiles(const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte);
+	UINT64 GenerateDummyFiles(
+		const UINT depth, const UINT* fileCountAry, const UINT64 minByte, const UINT64 maxByte, 
+		const UINT mean, const UINT variance);
 	void RemoveDummyFiles();
 }

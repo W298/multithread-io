@@ -41,26 +41,49 @@ namespace ThreadSchedule
 	class FileLock
 	{
 	public:
+		UINT status;
 		HANDLE sem1;
 		HANDLE sem2;
 		HANDLE sem3;
-		UINT status;
 
-		FileLock() = default;
-		FileLock(UINT fid)
+		FileLock() : status(FILE_STATUS_READ_CALL_TASK_WAITING), sem1(NULL), sem2(NULL), sem3(NULL) {}
+		explicit FileLock(UINT fid)
 		{
 			status = FILE_STATUS_READ_CALL_TASK_WAITING;
 			sem1 = CreateSemaphoreW(NULL, 1, 1, (std::to_wstring(fid) + L"-sem1").c_str());
 			sem2 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem2").c_str());
 			sem3 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem3").c_str());
 		}
+
+		~FileLock()
+		{
+			CloseHandle(sem1);
+			CloseHandle(sem2);
+			CloseHandle(sem3);
+		}
 	};
 
-	constexpr UINT g_threadCount = 3;
+	constexpr UINT testFileCount = 128;
+	constexpr UINT g_threadCount = 8;
 	constexpr UINT g_exitCode = 99;
+	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
-	void ComputeFunc(double timeOverMiliseconds);
+	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
+
+	void ReadCallTaskWork(UINT fid);
+	void CompletionTaskWork(UINT fid);
+	void ComputeTaskWork(double timeOverMiliseconds);
+
+	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType);
+	
+	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, 
+		Concurrency::diagnostic::marker_series* workerSeries,
+		Concurrency::diagnostic::marker_series* statusSeries
+	);
 	DWORD WINAPI ThreadFunc(LPVOID param);
-	void HeavyComputeFunc(UINT);
+	
+	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
+	void PostThreadExit(UINT t);
+
 	void StartThreadTasks();
 }
