@@ -36,7 +36,7 @@ UINT64 FileGenerator::GenerateDummyFiles(
 		{
 			// File creation.
 			const UINT64 fileByteSize = max(minByte, min(maxByte, round(abs(normalDist(generator)))));
-			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, 0, NULL);
+			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
 
 #ifdef PRINT_FILE_GEN
 			std::cout << "FID:" << fid << "\t" << fileByteSize << "\n";
@@ -92,8 +92,7 @@ UINT64 FileGenerator::GenerateDummyFiles(
 	// Release memory.
 	for (UINT64 fid = 0; fid < totalFileCount; fid++)
 	{
-		if (handleAry[fid] != INVALID_HANDLE_VALUE)
-			CloseHandle(handleAry[fid]);
+		CloseHandle(handleAry[fid]);
 	}
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	delete[] handleAry;

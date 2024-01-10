@@ -42,29 +42,25 @@ namespace ThreadSchedule
 	{
 	public:
 		UINT status;
-		HANDLE sem1;
-		HANDLE sem2;
-		HANDLE sem3;
+		HANDLE sem[3];
 
-		FileLock() : status(FILE_STATUS_READ_CALL_TASK_WAITING), sem1(NULL), sem2(NULL), sem3(NULL) {}
 		explicit FileLock(UINT fid)
 		{
 			status = FILE_STATUS_READ_CALL_TASK_WAITING;
-			sem1 = CreateSemaphoreW(NULL, 1, 1, (std::to_wstring(fid) + L"-sem1").c_str());
-			sem2 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem2").c_str());
-			sem3 = CreateSemaphoreW(NULL, 0, 1, (std::to_wstring(fid) + L"-sem3").c_str());
+			for (int i = 0; i < 3; i++)
+				sem[i] = CreateSemaphoreW(NULL, (UINT)(i == 0), 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
 		}
 
 		~FileLock()
 		{
-			CloseHandle(sem1);
-			CloseHandle(sem2);
-			CloseHandle(sem3);
+			for (int i = 0; i < 3; i++)
+				CloseHandle(sem[i]);
 		}
 	};
 
-	constexpr UINT testFileCount = 128;
-	constexpr UINT g_threadCount = 8;
+	constexpr UINT g_testFileCount = 250;
+	constexpr UINT g_threadCount = 4;
+	constexpr UINT g_taskRemoveCount = 10;
 	constexpr UINT g_exitCode = 99;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
@@ -76,10 +72,7 @@ namespace ThreadSchedule
 
 	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType);
 	
-	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, 
-		Concurrency::diagnostic::marker_series* workerSeries,
-		Concurrency::diagnostic::marker_series* statusSeries
-	);
+	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
 	DWORD WINAPI ThreadFunc(LPVOID param);
 	
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
