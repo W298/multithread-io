@@ -17,6 +17,7 @@ namespace ThreadSchedule
 	{
 		THREAD_TASK_READ_CALL,
 		THREAD_TASK_COMPLETION,
+		THREAD_TASK_DEPENDENCY,
 		THREAD_TASK_COMPUTE
 	};
 
@@ -28,9 +29,12 @@ namespace ThreadSchedule
 		FILE_STATUS_COMPLETION_TASK_WAITING,
 		FILE_STATUS_COMPLETION_TASK_STARTED,
 		FILE_STATUS_COMPLETION_TASK_COMPLETED,
+		FILE_STATUS_DEPENDENCY_TASK_WAITING,
+		FILE_STATUS_DEPENDENCY_TASK_STARTED,
+		FILE_STATUS_DEPENDENCY_TASK_COMPLETED,
 		FILE_STATUS_COMPUTE_TASK_WAITING,
 		FILE_STATUS_COMPUTE_TASK_STARTED,
-		FILE_STATUS_COMPUTE_TASK_COMPLTED
+		FILE_STATUS_COMPUTE_TASK_COMPLETED
 	};
 
 	struct ThreadTaskArgs
@@ -42,40 +46,51 @@ namespace ThreadSchedule
 	{
 	public:
 		UINT status;
-		HANDLE sem[3];
+		HANDLE sem[4];
+		HANDLE taskEndEv[4];
 
 		explicit FileLock(UINT fid)
 		{
 			status = FILE_STATUS_READ_CALL_TASK_WAITING;
-			for (int i = 0; i < 3; i++)
+			for (int i = 0; i < 4; i++)
+			{
 				sem[i] = CreateSemaphoreW(NULL, (UINT)(i == 0), 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
+				taskEndEv[i] = CreateEvent(NULL, TRUE, FALSE, (std::to_wstring(fid) + L"-end-ev" + std::to_wstring(i)).c_str());
+			}
 		}
 
 		~FileLock()
 		{
-			for (int i = 0; i < 3; i++)
+			for (int i = 0; i < 4; i++)
+			{
 				CloseHandle(sem[i]);
+				CloseHandle(taskEndEv[i]);
+			}
 		}
 	};
 
-	constexpr UINT g_threadCount = 8;
-	constexpr UINT g_taskRemoveCount = 10;
+	constexpr UINT g_threadCount = 9;
+	constexpr UINT g_taskRemoveCount = 1;
 	constexpr UINT g_exitCode = 99;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
+
+	constexpr BOOL g_waitDependencyFront = FALSE;
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
+	void DependencyTaskWork(UINT fid);
 	void ComputeTaskWork(UINT fid);
 
-	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType);
+	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
 	
 	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
 	DWORD WINAPI ThreadFunc(LPVOID param);
 	
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
 	void PostThreadExit(UINT t);
+	void InsertThreadTaskFront(UINT t, UINT* fidAry, UINT* threadTaskTypeAry, UINT count);
 
-	void StartThreadTasks(UINT totalFileCount);
+	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
 }
