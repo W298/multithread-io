@@ -9,13 +9,13 @@ int main()
 {
 	FileSizeArgs fileSize = FileSizeArgs(512u, 1048576u, 4096u, 51200u);
 	FileComputeArgs fileCompute = FileComputeArgs(50u, 5000u, 400u, 400u);
-	FileDependencyArgs fileDep = FileDependencyArgs(FILE_DEPENDENCY_PYRAMID, 4u, 4u);
-	FileGenerationArgs fArgs = FileGenerationArgs(fileSize, fileCompute, fileDep);
-	UINT64 totalFileCount = GenerateDummyFiles(fArgs);
+	FileDependencyArgs fileDep = FileDependencyArgs(FILE_DEPENDENCY_PYRAMID, 4u, TRUE, FILE_DEPENDENCY_ONLY_READ);
+	FileGenerationArgs fArgs = FileGenerationArgs(128u, fileSize, fileCompute, fileDep);
+	GenerateDummyFiles(fArgs);
 
-	StartThreadTasks(totalFileCount);
+	// StartThreadTasks(1);
 
-	RemoveDummyFiles(totalFileCount);
+	// RemoveDummyFiles(totalFileCount);
 
 	return 0;
 }

@@ -3,26 +3,44 @@
 
 using namespace Concurrency::diagnostic;
 
-UINT64 FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
+void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 {
 	marker_series mainThreadSeries(_T("Main Thread - FileGenerator"));
 	span* s = new span(mainThreadSeries, 0, _T("File Generation"));
 
-	UINT* fileCountAry = new UINT[args.fileDep.treeDepth];
-	UINT64 totalFileCount = 0;
+	UINT* depthFileCountAry = new UINT[args.fileDep.treeDepth];
 
-	UINT beforeDepthCount = 1u;
-	for (UINT i = 0; i < args.fileDep.treeDepth; i++)
+	UINT truncatedCount = 0;
+	UINT largestR = 1;
+
+	// Total file count is too small.
+	if (pow(2, args.fileDep.treeDepth) - 1 > args.totalFileCount)
+		ExitProcess(-2);
+
+	while (TRUE)
 	{
-		fileCountAry[i] = beforeDepthCount * args.fileDep.treeMultiply;
-		totalFileCount += fileCountAry[i];
-		beforeDepthCount = fileCountAry[i];
+		largestR++;
+
+		truncatedCount = (pow(largestR, args.fileDep.treeDepth) - 1) / (largestR - 1);
+		if (truncatedCount > args.totalFileCount)
+		{
+			largestR--;
+			truncatedCount = (pow(largestR, args.fileDep.treeDepth) - 1) / (largestR - 1);
+			break;
+		}
 	}
+
+	UINT rest = args.totalFileCount - truncatedCount;
+
+	for (UINT curDepth = 0; curDepth < args.fileDep.treeDepth; curDepth++)
+		depthFileCountAry[curDepth] = 1 * pow(largestR, curDepth);
+	
+	depthFileCountAry[args.fileDep.treeDepth - 1] += rest;
 
 	CreateDirectoryW(L"dummy", NULL);
 	const std::wstring path = L"dummy\\";
 
-	HANDLE* handleAry = new HANDLE[totalFileCount];
+	HANDLE* handleAry = new HANDLE[args.totalFileCount];
 	BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, args.fileSize.maxByte);
 
 	std::random_device rd;
@@ -34,8 +52,10 @@ UINT64 FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 	UINT fidOffset = 0;
 	for (UINT curDepth = 0; curDepth < args.fileDep.treeDepth; curDepth++)
 	{
-		for (UINT fid = fidOffset; fid < fidOffset + fileCountAry[curDepth]; fid++)
+		for (UINT fid = fidOffset; fid < fidOffset + depthFileCountAry[curDepth]; fid++)
 		{
+			std::cout << fid << " ";
+
 			// File creation.
 			const UINT64 fileByteSize = max(args.fileSize.minByte, min(args.fileSize.maxByte, round(abs(sizeNormalDist(generator)))));
 			const UINT fileComputeTime = max(args.fileCompute.minMicroSeconds, min(args.fileCompute.maxMicroSeconds, round(abs(computeNormalDist(generator)))));
@@ -52,10 +72,10 @@ UINT64 FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			{
 				// File dependency define.
 				std::vector<std::pair<UINT, BYTE>> dependencyVec;
-				for (UINT off = 0; off < fileCountAry[curDepth + 1]; off++)
+				for (UINT off = 0; off < depthFileCountAry[curDepth + 1]; off++)
 				{
-					const UINT dependencyFID = fidOffset + fileCountAry[curDepth] + off;
-					const BYTE fileDependency = uniformIntDist(generator);
+					const UINT dependencyFID = fidOffset + depthFileCountAry[curDepth] + off;
+					const BYTE fileDependency = args.fileDep.forceAllDep ? args.fileDep.forceAllDepType : uniformIntDist(generator);
 
 					if (fileDependency != 0)
 						dependencyVec.emplace_back(dependencyFID, fileDependency);
@@ -89,19 +109,18 @@ UINT64 FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			}
 		}
 
-		fidOffset += fileCountAry[curDepth];
+		std::cout << "\n";
+
+		fidOffset += depthFileCountAry[curDepth];
 	}
 
 	// Release memory.
-	for (UINT64 fid = 0; fid < totalFileCount; fid++)
-	{
-		CloseHandle(handleAry[fid]);
-	}
+	for (UINT64 fid = 0; fid < args.totalFileCount; fid++)
+	CloseHandle(handleAry[fid]);
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	delete[] handleAry;
 
 	delete s;
-	return totalFileCount;
 }
 
 void FileGenerator::RemoveDummyFiles(UINT64 totalFileCount)

@@ -36,16 +36,18 @@ namespace FileGenerator
 	{
 		FileDependencyModel model;
 		UINT treeDepth;
-		UINT treeMultiply;
+		BOOL forceAllDep;
+		FileDependencyType forceAllDepType;
 	};
 	
 	struct FileGenerationArgs
 	{
+		UINT64 totalFileCount;
 		FileSizeArgs fileSize;
 		FileComputeArgs fileCompute;
 		FileDependencyArgs fileDep;
 	};
 
-	UINT64 GenerateDummyFiles(const FileGenerationArgs fileGenerationArgs);
+	void GenerateDummyFiles(const FileGenerationArgs fileGenerationArgs);
 	void RemoveDummyFiles(UINT64 totalFileCount);
 }
