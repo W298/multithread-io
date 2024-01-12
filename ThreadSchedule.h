@@ -17,7 +17,6 @@ namespace ThreadSchedule
 	{
 		THREAD_TASK_READ_CALL,
 		THREAD_TASK_COMPLETION,
-		THREAD_TASK_DEPENDENCY,
 		THREAD_TASK_COMPUTE
 	};
 
@@ -29,9 +28,6 @@ namespace ThreadSchedule
 		FILE_STATUS_COMPLETION_TASK_WAITING,
 		FILE_STATUS_COMPLETION_TASK_STARTED,
 		FILE_STATUS_COMPLETION_TASK_COMPLETED,
-		FILE_STATUS_DEPENDENCY_TASK_WAITING,
-		FILE_STATUS_DEPENDENCY_TASK_STARTED,
-		FILE_STATUS_DEPENDENCY_TASK_COMPLETED,
 		FILE_STATUS_COMPUTE_TASK_WAITING,
 		FILE_STATUS_COMPUTE_TASK_STARTED,
 		FILE_STATUS_COMPUTE_TASK_COMPLETED
@@ -45,12 +41,12 @@ namespace ThreadSchedule
 	class FileLock
 	{
 	public:
-		HANDLE sem[4];
-		HANDLE taskEndEv[4];
+		HANDLE sem[3];
+		HANDLE taskEndEv[3];
 
 		explicit FileLock(UINT fid)
 		{
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < 3; i++)
 			{
 				sem[i] = CreateSemaphoreW(NULL, (UINT)(i == 0), 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
 				taskEndEv[i] = CreateEvent(NULL, TRUE, FALSE, (std::to_wstring(fid) + L"-end-ev" + std::to_wstring(i)).c_str());
@@ -59,7 +55,7 @@ namespace ThreadSchedule
 
 		~FileLock()
 		{
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < 3; i++)
 			{
 				CloseHandle(sem[i]);
 				CloseHandle(taskEndEv[i]);
@@ -67,19 +63,18 @@ namespace ThreadSchedule
 		}
 	};
 
-	constexpr UINT g_threadCount = 9;
-	constexpr UINT g_taskRemoveCount = 1;
+	constexpr UINT g_threadCount = 14;
+	constexpr UINT g_taskRemoveCount = 10;
 	constexpr UINT g_exitCode = 99;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
-	constexpr BOOL g_waitDependencyFront = FALSE;
+	constexpr BOOL g_waitDependencyFront = TRUE;
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 
-	void ReadCallTaskWork(UINT fid);
-	void CompletionTaskWork(UINT fid);
-	void DependencyTaskWork(UINT fid);
-	void ComputeTaskWork(UINT fid);
+	void ReadCallTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
+	void CompletionTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
+	void ComputeTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
 
 	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
 	

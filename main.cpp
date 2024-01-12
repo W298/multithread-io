@@ -13,8 +13,11 @@ int main()
 	FileGenerationArgs fArgs = FileGenerationArgs(250u, fileSize, fileCompute, fileDep);
 	// GenerateDummyFiles(fArgs);
 
-	UINT rootFIDAry[9] = { 4, 5, 6, 7, 8, 9, 10, 11, 12 };
-	StartThreadTasks(rootFIDAry, 9);
+	UINT* rootFIDAry = new UINT[248];
+	for (int i = 0; i < 248; i++)
+		rootFIDAry[i] = i;
+
+	StartThreadTasks(rootFIDAry, 248);
 
 	// RemoveDummyFiles(totalFileCount);
 

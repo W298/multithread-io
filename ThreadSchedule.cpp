@@ -2,6 +2,16 @@
 #include "ThreadSchedule.h"
 #include "FileGenerator.h"
 
+#define SERIES_INIT(name) \
+	marker_series series(name);
+#define SPAN_INIT \
+	span* s = nullptr;
+#define SPAN_START(cat, name) \
+	s = new span(series, cat, name);
+#define SPAN_END delete s;
+
+#define GET_TASK_NAME(type) type == 0 ? "Read Call" : type == 1 ? "Completion" : "Compute"
+
 using namespace Concurrency::diagnostic;
 using namespace ThreadSchedule;
 
@@ -9,14 +19,12 @@ using namespace ThreadSchedule;
 HANDLE g_iocp;
 HANDLE g_threadHandleAry[g_threadCount];
 HANDLE g_threadIocpAry[g_threadCount];
-std::unordered_map<DWORD, UINT> g_tidMap;
 
 SRWLOCK g_srwFileStatus;
 SRWLOCK g_srwFileLock;
 SRWLOCK g_srwFileHandle;
 SRWLOCK g_srwFileIocp;
 SRWLOCK g_srwFileBuffer;
-SRWLOCK g_srwFileDep;
 
 // File cache data.
 std::unordered_map<UINT, UINT> g_fileStatusMap;
@@ -24,203 +32,91 @@ std::unordered_map<UINT, FileLock*> g_fileLockMap;
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
 std::unordered_map<UINT, BYTE*> g_fileBufferMap;
-std::unordered_map<UINT, std::pair<UINT*, UINT>> g_fileDepMap;
 
 DWORD ThreadSchedule::GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize)
 {
 	return ((fileByteSize->QuadPart / sectorSize) + 1u) * sectorSize;
 }
 
-void ThreadSchedule::ReadCallTaskWork(UINT fid)
+void ThreadSchedule::ReadCallTaskWork(UINT fid, marker_series& series)
 {
-	HANDLE fileHandle = CreateFileW((L"dummy\\" + std::to_wstring(fid)).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, g_fileFlag, NULL);
-	HANDLE fileIOCP = CreateIoCompletionPort(fileHandle, NULL, 0, 0);
+	SPAN_INIT;
 
+	SPAN_START(0, _T("Create File"));
+	HANDLE fileHandle = CreateFileW((L"dummy\\" + std::to_wstring(fid)).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, g_fileFlag, NULL);
+	SPAN_END;
+
+	SPAN_START(0, _T("Create IOCP Handle"));
+	HANDLE fileIOCP = CreateIoCompletionPort(fileHandle, NULL, 0, 0);
+	SPAN_END;
+
+	SPAN_START(0, _T("Get File Size"));
 	LARGE_INTEGER fileByteSize;
 	DWORD alignedFileByteSize;
 
 	GetFileSizeEx(fileHandle, &fileByteSize);
 	alignedFileByteSize = GetAlignedByteSize(&fileByteSize, 512u);
+	SPAN_END;
 
+	SPAN_START(0, _T("Buffer Allocation"));
 	BYTE* fileBuffer = (BYTE*)VirtualAlloc(NULL, alignedFileByteSize, MEM_COMMIT, PAGE_READWRITE);
+	SPAN_END;
 
+	SPAN_START(0, _T("Write to Map"));
 	AcquireSRWLockExclusive(&g_srwFileHandle);
 	{
 		if (g_fileHandleMap.find(fid) == g_fileHandleMap.end())
 			g_fileHandleMap[fid] = fileHandle;
 	}
 	ReleaseSRWLockExclusive(&g_srwFileHandle);
-
 	AcquireSRWLockExclusive(&g_srwFileIocp);
 	{
 		if (g_fileIocpMap.find(fid) == g_fileIocpMap.end())
 			g_fileIocpMap[fid] = fileIOCP;
 	}
 	ReleaseSRWLockExclusive(&g_srwFileIocp);
-
 	AcquireSRWLockExclusive(&g_srwFileBuffer);
 	{
 		if (g_fileBufferMap.find(fid) == g_fileBufferMap.end())
 			g_fileBufferMap[fid] = fileBuffer;
 	}
 	ReleaseSRWLockExclusive(&g_srwFileBuffer);
+	SPAN_END;
 
+	SPAN_START(0, _T("ReadFile Call"));
 	OVERLAPPED ov = { 0 };
 	if (ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, &ov) == FALSE && GetLastError() != ERROR_IO_PENDING)
 		ExitProcess(-1);
+	SPAN_END;
 }
 
-void ThreadSchedule::CompletionTaskWork(UINT fid)
+void ThreadSchedule::CompletionTaskWork(UINT fid, marker_series& series)
 {
+	SPAN_INIT;
+
+	SPAN_START(1, _T("Ready"));
 	DWORD fRet;
 	ULONG_PTR fKey;
 	LPOVERLAPPED fLpov;
 
-	HANDLE fileIocp = fileIocp = g_fileIocpMap[fid];
+	HANDLE fileIocp = NULL;
+	AcquireSRWLockShared(&g_srwFileIocp);
+	{
+		fileIocp = g_fileIocpMap[fid];
+	}
+	ReleaseSRWLockShared(&g_srwFileIocp);
+	SPAN_END;
+
+	SPAN_START(1, _T("Waiting..."));
 	GetQueuedCompletionStatus(fileIocp, &fRet, &fKey, &fLpov, INFINITE);
+	SPAN_END;
 }
 
-void ThreadSchedule::DependencyTaskWork(UINT fid)
+void ThreadSchedule::ComputeTaskWork(UINT fid, marker_series& series)
 {
-	BYTE* bufferAddress = nullptr;
-	AcquireSRWLockShared(&g_srwFileBuffer);
-	{
-		bufferAddress = g_fileBufferMap[fid];
-	}
-	ReleaseSRWLockShared(&g_srwFileBuffer);
+	SPAN_INIT;
 
-	BYTE* cursor = bufferAddress + sizeof(UINT);
-
-	UINT dependencyFileCount;
-	memcpy(&dependencyFileCount, cursor, sizeof(UINT));
-	cursor += sizeof(UINT);
-
-	UINT* depFIDAry = new UINT[dependencyFileCount];
-	memcpy(depFIDAry, cursor, dependencyFileCount * sizeof(UINT));
-	cursor += dependencyFileCount * sizeof(UINT);
-
-	AcquireSRWLockExclusive(&g_srwFileDep);
-	{
-		g_fileDepMap[fid] = std::make_pair(depFIDAry, dependencyFileCount);
-	}
-	ReleaseSRWLockExclusive(&g_srwFileDep);
-
-	const UINT t = g_tidMap[GetCurrentThreadId()];
-
-	std::vector<UINT> fidVec;
-	std::vector<UINT> taskTypeVec;
-
-	// [VARIABLE]
-	for (int dep = 0; dep < dependencyFileCount; dep++)
-	{
-		const UINT depFID = depFIDAry[dep];
-
-		UINT depFileStatus = 0;
-		AcquireSRWLockShared(&g_srwFileStatus);
-		{
-			depFileStatus = g_fileStatusMap[depFID];
-		}
-		ReleaseSRWLockShared(&g_srwFileStatus);
-
-		if (depFileStatus >= FILE_STATUS_COMPUTE_TASK_COMPLETED)
-		{
-			// Computed data guaranteed. 
-			continue;
-		}
-		else
-		{
-			switch (depFileStatus)
-			{
-			case FILE_STATUS_READ_CALL_TASK_WAITING:
-			{
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_READ_CALL);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPLETION);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-				break;
-			}
-			case FILE_STATUS_READ_CALL_TASK_STARTED:
-			case FILE_STATUS_READ_CALL_TASK_COMPLETED:
-			case FILE_STATUS_COMPLETION_TASK_WAITING:
-			{
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPLETION);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-				break;
-			}
-			case FILE_STATUS_COMPLETION_TASK_STARTED:
-			case FILE_STATUS_COMPLETION_TASK_COMPLETED:
-			case FILE_STATUS_DEPENDENCY_TASK_WAITING:
-			{
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
-
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-			}
-			case FILE_STATUS_DEPENDENCY_TASK_STARTED:
-			case FILE_STATUS_DEPENDENCY_TASK_COMPLETED:
-			case FILE_STATUS_COMPUTE_TASK_WAITING:
-			{
-				fidVec.push_back(depFID);
-				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-			}
-			case FILE_STATUS_COMPUTE_TASK_STARTED:
-			case FILE_STATUS_COMPUTE_TASK_COMPLETED:
-				break;
-			}
-		}
-	}
-
-	InsertThreadTaskFront(t, fidVec.data(), taskTypeVec.data(), fidVec.size());
-}
-
-void ThreadSchedule::ComputeTaskWork(UINT fid)
-{
-	// Check all dependency is ok. If not, wait.
-	if (g_waitDependencyFront == FALSE)
-	{
-		std::vector<HANDLE> waitEvHandleVec;
-		
-		std::pair<UINT*, UINT> depPair;
-		AcquireSRWLockShared(&g_srwFileDep);
-		{
-			depPair = g_fileDepMap[fid];
-		}
-		ReleaseSRWLockShared(&g_srwFileDep);
-		
-		for (int dep = 0; dep < depPair.second; dep++)
-		{
-			const UINT depFID = depPair.first[dep];
-
-			UINT depFileStatus = 0;
-			HANDLE depFileTaskEndEvCompletion = g_fileLockMap[depFID]->taskEndEv[THREAD_TASK_COMPLETION];
-			HANDLE depFileTaskEndEvCompute = g_fileLockMap[depFID]->taskEndEv[THREAD_TASK_COMPUTE];
-			AcquireSRWLockShared(&g_srwFileStatus);
-			{
-				depFileStatus = g_fileStatusMap[depFID];
-			}
-			ReleaseSRWLockShared(&g_srwFileStatus);
-
-			if (depFileStatus < FILE_STATUS_COMPUTE_TASK_COMPLETED)
-				waitEvHandleVec.push_back(depFileTaskEndEvCompute);
-		}
-
-		WaitForMultipleObjects(waitEvHandleVec.size(), waitEvHandleVec.data(), TRUE, INFINITE);
-	}
-
+	SPAN_START(2, _T("Ready Paramters"));
 	LARGE_INTEGER freq, start, end;
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&start);
@@ -234,7 +130,9 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 
 	UINT timeOverMicroSeconds;
 	memcpy(&timeOverMicroSeconds, bufferAddress, sizeof(UINT));
+	SPAN_END;
 
+	SPAN_START(2, _T("Start Compute"));
 	float elapsedMicroSeconds = 0.0f;
 	while (elapsedMicroSeconds <= timeOverMicroSeconds)
 	{
@@ -247,7 +145,10 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 				QueryPerformanceCounter(&end);
 				elapsedMicroSeconds = ((float)(end.QuadPart - start.QuadPart) / freq.QuadPart) * 1000.0f * 1000.0f;
 				if (elapsedMicroSeconds > timeOverMicroSeconds)
+				{
+					SPAN_END;
 					return;
+				}
 
 				if (num % i == 0)
 					break;
@@ -257,7 +158,7 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 				primes++;
 		}
 	}
-
+	SPAN_END;
 	return;
 }
 
@@ -266,6 +167,7 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 DWORD ThreadSchedule::HandleLockAcquireFailure(UINT fid, UINT threadTaskType, marker_series* workerSeries)
 {
 	UINT fileStatus = 0;
+
 	HANDLE* fileSemAry = g_fileLockMap[fid]->sem;
 	HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEv;
 	AcquireSRWLockShared(&g_srwFileStatus);
@@ -342,23 +244,35 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, mar
 	InterlockedIncrement(&g_fileStatusMap[fid]);
 	ReleaseSRWLockExclusive(&g_srwFileStatus);
 
-	span* s = new span(*workerSeries, threadTaskType, (L"Task " + std::to_wstring(threadTaskType) + L" (FID " + std::to_wstring(fid) + L")").c_str());
+	span* ss = nullptr;
 	switch (threadTaskType)
 	{
 	case THREAD_TASK_READ_CALL:
-		ReadCallTaskWork(fid);
+		ss = new span(*workerSeries, threadTaskType, (L"Read Call Task (" + std::to_wstring(fid) + L")").c_str());
 		break;
 	case THREAD_TASK_COMPLETION:
-		CompletionTaskWork(fid);
-		break;
-	case THREAD_TASK_DEPENDENCY:
-		DependencyTaskWork(fid);
+		ss = new span(*workerSeries, threadTaskType, (L"Completion Task (" + std::to_wstring(fid) + L")").c_str());
 		break;
 	case THREAD_TASK_COMPUTE:
-		ComputeTaskWork(fid);
+		ss = new span(*workerSeries, threadTaskType, (L"Compute Task (" + std::to_wstring(fid) + L")").c_str());
 		break;
 	}
-	delete s;
+
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L"-Task Series").c_str());
+
+	switch (threadTaskType)
+	{
+	case THREAD_TASK_READ_CALL:
+		ReadCallTaskWork(fid, series);
+		break;
+	case THREAD_TASK_COMPLETION:
+		CompletionTaskWork(fid, series);
+		break;
+	case THREAD_TASK_COMPUTE:
+		ComputeTaskWork(fid, series);
+		break;
+	}
+	delete ss;
 
 	AcquireSRWLockExclusive(&g_srwFileStatus);
 	InterlockedIncrement(&g_fileStatusMap[fid]);
@@ -382,7 +296,7 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 {
 	marker_series workerSeries(std::to_wstring(GetCurrentThreadId()).c_str());
 	
-	const HANDLE iocpHandle = *(HANDLE*)(param);
+	const HANDLE threadIOCPHandle = *(HANDLE*)(param);
 
 	OVERLAPPED_ENTRY ent[g_taskRemoveCount];
 	ULONG entRemoved;
@@ -391,7 +305,7 @@ DWORD WINAPI ThreadSchedule::ThreadFunc(LPVOID param)
 	{
 		workerSeries.write_flag(1, _T("Waiting Task..."));
 
-		GetQueuedCompletionStatusEx(iocpHandle, ent, g_taskRemoveCount, &entRemoved, INFINITE, FALSE);
+		GetQueuedCompletionStatusEx(threadIOCPHandle, ent, g_taskRemoveCount, &entRemoved, INFINITE, FALSE);
 
 		for (int i = 0; i < entRemoved; i++)
 		{
@@ -458,7 +372,6 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 	InitializeSRWLock(&g_srwFileHandle);
 	InitializeSRWLock(&g_srwFileIocp);
 	InitializeSRWLock(&g_srwFileBuffer);
-	InitializeSRWLock(&g_srwFileDep);
 
 	// Create thread handles.
 	for (int t = 0; t < g_threadCount; t++)
@@ -470,29 +383,51 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 		if (tHandle == NULL)
 			ExitProcess(3);
 
-		g_tidMap[tid] = t;
 		g_threadHandleAry[t] = tHandle;
 	}
 
 	// Create root file locking & status objects.
-	for (int i = 0; i < 250; i++)
+	for (int i = 0; i < rootFIDAryCount; i++)
 	{
-		g_fileLockMap[i] = new FileLock(i);
-		g_fileStatusMap[i] = 0;
+		const UINT rootFID = rootFIDAry[i];
+		g_fileLockMap[rootFID] = new FileLock(rootFID);
+		g_fileStatusMap[rootFID] = 0;
 	}
-
-	std::vector<UINT> depFIDVec;
-	std::vector<FileLock*> fileLockVec;
 
 	// [VARIABLE] #Scenario. Main thread assign threads what to do.
 	span* s = new span(mainThreadSeries, 1, _T("Send Tasks"));
 	{
-		for (int i = 0; i < rootFIDAryCount; i++)
+		/*for (int i = 0; i < rootFIDAryCount; i++)
 		{
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_READ_CALL);
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_COMPLETION);
-			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_DEPENDENCY);
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_COMPUTE);
+		}*/
+
+		for (int i = 0; i < rootFIDAryCount/4; i++)
+		{
+			PostThreadTask(0, rootFIDAry[i*4], THREAD_TASK_READ_CALL);
+			PostThreadTask(1, rootFIDAry[i*4+1], THREAD_TASK_READ_CALL);
+			PostThreadTask(2, rootFIDAry[i*4+2], THREAD_TASK_READ_CALL);
+			PostThreadTask(3, rootFIDAry[i*4+3], THREAD_TASK_READ_CALL);
+		}
+
+		for (int i = 0; i < rootFIDAryCount/2; i++)
+		{
+			PostThreadTask(4, rootFIDAry[i*2], THREAD_TASK_COMPLETION);
+			PostThreadTask(5, rootFIDAry[i*2+1], THREAD_TASK_COMPLETION);
+		}
+
+		for (int i = 0; i < rootFIDAryCount/8; i++)
+		{
+			PostThreadTask(6, rootFIDAry[i*8], THREAD_TASK_COMPUTE);
+			PostThreadTask(7, rootFIDAry[i*8+1], THREAD_TASK_COMPUTE);
+			PostThreadTask(8, rootFIDAry[i*8+2], THREAD_TASK_COMPUTE);
+			PostThreadTask(9, rootFIDAry[i*8+3], THREAD_TASK_COMPUTE);
+			PostThreadTask(10, rootFIDAry[i*8+4], THREAD_TASK_COMPUTE);
+			PostThreadTask(11, rootFIDAry[i*8+5], THREAD_TASK_COMPUTE);
+			PostThreadTask(12, rootFIDAry[i*8+6], THREAD_TASK_COMPUTE);
+			PostThreadTask(13, rootFIDAry[i*8+7], THREAD_TASK_COMPUTE);
 		}
 	}
 	delete s;
@@ -518,14 +453,10 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 		for (int i = 0; i < g_fileLockMap.size(); i++)
 			delete g_fileLockMap[i];
 
-		for (int i = 0; i < g_fileDepMap.size(); i++)
-			delete[] g_fileDepMap[i].first;
-
 		g_fileBufferMap.clear();
 		g_fileIocpMap.clear();
 		g_fileHandleMap.clear();
 		g_fileLockMap.clear();
-		g_fileDepMap.clear();
 	}
 
 	// Release thread handle/iocp.
