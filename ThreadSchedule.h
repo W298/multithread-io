@@ -45,13 +45,11 @@ namespace ThreadSchedule
 	class FileLock
 	{
 	public:
-		UINT status;
 		HANDLE sem[4];
 		HANDLE taskEndEv[4];
 
 		explicit FileLock(UINT fid)
 		{
-			status = FILE_STATUS_READ_CALL_TASK_WAITING;
 			for (int i = 0; i < 4; i++)
 			{
 				sem[i] = CreateSemaphoreW(NULL, (UINT)(i == 0), 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());

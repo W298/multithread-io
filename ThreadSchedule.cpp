@@ -11,6 +11,7 @@ HANDLE g_threadHandleAry[g_threadCount];
 HANDLE g_threadIocpAry[g_threadCount];
 std::unordered_map<DWORD, UINT> g_tidMap;
 
+SRWLOCK g_srwFileStatus;
 SRWLOCK g_srwFileLock;
 SRWLOCK g_srwFileHandle;
 SRWLOCK g_srwFileIocp;
@@ -18,6 +19,7 @@ SRWLOCK g_srwFileBuffer;
 SRWLOCK g_srwFileDep;
 
 // File cache data.
+std::unordered_map<UINT, UINT> g_fileStatusMap;
 std::unordered_map<UINT, FileLock*> g_fileLockMap;
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
@@ -105,17 +107,6 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 
 	const UINT t = g_tidMap[GetCurrentThreadId()];
 
-	AcquireSRWLockExclusive(&g_srwFileLock);
-	{
-		for (int dep = 0; dep < dependencyFileCount; dep++)
-		{
-			const UINT depFID = depFIDAry[dep];
-			if (g_fileLockMap.find(depFID) == g_fileLockMap.end())
-				g_fileLockMap[depFID] = new FileLock(depFID);
-		}
-	}
-	ReleaseSRWLockExclusive(&g_srwFileLock);
-
 	std::vector<UINT> fidVec;
 	std::vector<UINT> taskTypeVec;
 
@@ -125,11 +116,11 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 		const UINT depFID = depFIDAry[dep];
 
 		UINT depFileStatus = 0;
-		AcquireSRWLockShared(&g_srwFileLock);
+		AcquireSRWLockShared(&g_srwFileStatus);
 		{
-			depFileStatus = g_fileLockMap[depFID]->status;
+			depFileStatus = g_fileStatusMap[depFID];
 		}
-		ReleaseSRWLockShared(&g_srwFileLock);
+		ReleaseSRWLockShared(&g_srwFileStatus);
 
 		if (depFileStatus >= FILE_STATUS_COMPUTE_TASK_COMPLETED)
 		{
@@ -217,11 +208,11 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 			UINT depFileStatus = 0;
 			HANDLE depFileTaskEndEvCompletion = g_fileLockMap[depFID]->taskEndEv[THREAD_TASK_COMPLETION];
 			HANDLE depFileTaskEndEvCompute = g_fileLockMap[depFID]->taskEndEv[THREAD_TASK_COMPUTE];
-			AcquireSRWLockShared(&g_srwFileLock);
+			AcquireSRWLockShared(&g_srwFileStatus);
 			{
-				depFileStatus = g_fileLockMap[depFID]->status;
+				depFileStatus = g_fileStatusMap[depFID];
 			}
-			ReleaseSRWLockShared(&g_srwFileLock);
+			ReleaseSRWLockShared(&g_srwFileStatus);
 
 			if (depFileStatus < FILE_STATUS_COMPUTE_TASK_COMPLETED)
 				waitEvHandleVec.push_back(depFileTaskEndEvCompute);
@@ -277,11 +268,11 @@ DWORD ThreadSchedule::HandleLockAcquireFailure(UINT fid, UINT threadTaskType, ma
 	UINT fileStatus = 0;
 	HANDLE* fileSemAry = g_fileLockMap[fid]->sem;
 	HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEv;
-	AcquireSRWLockShared(&g_srwFileLock);
+	AcquireSRWLockShared(&g_srwFileStatus);
 	{
-		fileStatus = g_fileLockMap[fid]->status;
+		fileStatus = g_fileStatusMap[fid];
 	}
-	ReleaseSRWLockShared(&g_srwFileLock);
+	ReleaseSRWLockShared(&g_srwFileStatus);
 
 	// Another thread is processing pre-require task.
 	if (fileStatus < threadTaskType * 3)
@@ -347,7 +338,9 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, mar
 		}
 	}
 
-	InterlockedIncrement(&g_fileLockMap[fid]->status);
+	AcquireSRWLockExclusive(&g_srwFileStatus);
+	InterlockedIncrement(&g_fileStatusMap[fid]);
+	ReleaseSRWLockExclusive(&g_srwFileStatus);
 
 	span* s = new span(*workerSeries, threadTaskType, (L"Task " + std::to_wstring(threadTaskType) + L" (FID " + std::to_wstring(fid) + L")").c_str());
 	switch (threadTaskType)
@@ -367,12 +360,17 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, mar
 	}
 	delete s;
 
-	InterlockedIncrement(&g_fileLockMap[fid]->status);
+	AcquireSRWLockExclusive(&g_srwFileStatus);
+	InterlockedIncrement(&g_fileStatusMap[fid]);
+	ReleaseSRWLockExclusive(&g_srwFileStatus);
 
 	if (threadTaskType < THREAD_TASK_COMPUTE)
 	{
 		ReleaseSemaphore(fileSemAry[threadTaskType + 1], 1, NULL);
-		InterlockedIncrement(&g_fileLockMap[fid]->status);
+		
+		AcquireSRWLockExclusive(&g_srwFileStatus);
+		InterlockedIncrement(&g_fileStatusMap[fid]);
+		ReleaseSRWLockExclusive(&g_srwFileStatus);
 	}
 
 	SetEvent(taskEndEvAry[threadTaskType]);
@@ -476,12 +474,15 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 		g_threadHandleAry[t] = tHandle;
 	}
 
-	// Create root file status objects.
-	for (int i = 0; i < rootFIDAryCount; i++)
+	// Create root file locking & status objects.
+	for (int i = 0; i < 250; i++)
 	{
-		UINT rootFID = rootFIDAry[i];
-		g_fileLockMap[rootFID] = new FileLock(rootFID);
+		g_fileLockMap[i] = new FileLock(i);
+		g_fileStatusMap[i] = 0;
 	}
+
+	std::vector<UINT> depFIDVec;
+	std::vector<FileLock*> fileLockVec;
 
 	// [VARIABLE] #Scenario. Main thread assign threads what to do.
 	span* s = new span(mainThreadSeries, 1, _T("Send Tasks"));
