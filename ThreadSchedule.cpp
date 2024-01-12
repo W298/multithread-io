@@ -38,6 +38,278 @@ DWORD ThreadSchedule::GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sect
 	return ((fileByteSize->QuadPart / sectorSize) + 1u) * sectorSize;
 }
 
+void ThreadSchedule::ReadCallTaskWorkGlobal(UINT fid, marker_series& series)
+{
+	SPAN_INIT;
+
+	SPAN_START(0, _T("Create File"));
+	HANDLE fileHandle = CreateFileW((L"dummy\\" + std::to_wstring(fid)).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, g_fileFlag, NULL);
+	SPAN_END;
+
+	SPAN_START(0, _T("Create IOCP Handle"));
+	HANDLE fileIOCP = CreateIoCompletionPort(fileHandle, g_iocp, 0, 0);
+	SPAN_END;
+
+	SPAN_START(0, _T("Get File Size"));
+	LARGE_INTEGER fileByteSize;
+	DWORD alignedFileByteSize;
+
+	GetFileSizeEx(fileHandle, &fileByteSize);
+	alignedFileByteSize = GetAlignedByteSize(&fileByteSize, 512u);
+	SPAN_END;
+
+	SPAN_START(0, _T("Buffer Allocation"));
+	BYTE* fileBuffer = (BYTE*)VirtualAlloc(NULL, alignedFileByteSize, MEM_COMMIT, PAGE_READWRITE);
+	SPAN_END;
+
+	SPAN_START(0, _T("Write to Map"));
+	AcquireSRWLockExclusive(&g_srwFileHandle);
+	{
+		if (g_fileHandleMap.find(fid) == g_fileHandleMap.end())
+			g_fileHandleMap[fid] = fileHandle;
+	}
+	ReleaseSRWLockExclusive(&g_srwFileHandle);
+	AcquireSRWLockExclusive(&g_srwFileIocp);
+	{
+		if (g_fileIocpMap.find(fid) == g_fileIocpMap.end())
+			g_fileIocpMap[fid] = fileIOCP;
+	}
+	ReleaseSRWLockExclusive(&g_srwFileIocp);
+	AcquireSRWLockExclusive(&g_srwFileBuffer);
+	{
+		if (g_fileBufferMap.find(fid) == g_fileBufferMap.end())
+			g_fileBufferMap[fid] = fileBuffer;
+	}
+	ReleaseSRWLockExclusive(&g_srwFileBuffer);
+	SPAN_END;
+
+	SPAN_START(0, _T("ReadFile Call"));
+	
+	UINT* pFID = new UINT();
+	*pFID = fid;
+
+	OVERLAPPED* ov = new OVERLAPPED();
+	ov->Pointer = pFID;
+
+	if (ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, ov) == FALSE && GetLastError() != ERROR_IO_PENDING)
+		ExitProcess(-1);
+	SPAN_END;
+}
+
+void ThreadSchedule::CompletionTaskWorkGlobal(marker_series& series)
+{
+	SPAN_INIT;
+
+	DWORD fRet;
+	ULONG_PTR fKey;
+	LPOVERLAPPED fLpov;
+
+	SPAN_START(1, _T("Waiting..."));
+	GetQueuedCompletionStatus(g_iocp, &fRet, &fKey, &fLpov, INFINITE);
+	SPAN_END;
+}
+
+void ThreadSchedule::DoThreadTaskGlobal(ThreadTaskArgs* args, UINT threadTaskType, marker_series* workerSeries)
+{
+	UINT fid = args->FID;
+
+	HANDLE* fileSemAry = g_fileLockMap[fid]->sem;
+	HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEv;
+
+	// [VARIABLE]
+	DWORD waitResult = WaitForSingleObject(fileSemAry[threadTaskType], 0L);
+	if (waitResult == WAIT_TIMEOUT)	// If failed to get lock...
+	{
+		waitResult = HandleLockAcquireFailure(fid, threadTaskType, workerSeries);
+		if (waitResult == WAIT_TIMEOUT)
+		{
+			HeapFree(GetProcessHeap(), 0, args);
+			return;
+		}
+	}
+
+	AcquireSRWLockExclusive(&g_srwFileStatus);
+	InterlockedIncrement(&g_fileStatusMap[fid]);
+	ReleaseSRWLockExclusive(&g_srwFileStatus);
+
+	span* ss = nullptr;
+	switch (threadTaskType)
+	{
+	case THREAD_TASK_READ_CALL:
+		ss = new span(*workerSeries, threadTaskType, (L"Read Call Task (" + std::to_wstring(fid) + L")").c_str());
+		break;
+	case THREAD_TASK_COMPLETION:
+		ss = new span(*workerSeries, threadTaskType, (L"Completion Task (" + std::to_wstring(fid) + L")").c_str());
+		break;
+	case THREAD_TASK_COMPUTE:
+		ss = new span(*workerSeries, threadTaskType, (L"Compute Task (" + std::to_wstring(fid) + L")").c_str());
+		break;
+	}
+
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L"-Task Series").c_str());
+
+	switch (threadTaskType)
+	{
+	case THREAD_TASK_READ_CALL:
+		ReadCallTaskWorkGlobal(fid, series);
+		break;
+	case THREAD_TASK_COMPLETION:
+		CompletionTaskWorkGlobal(series);
+		break;
+	case THREAD_TASK_COMPUTE:
+		ComputeTaskWork(fid, series);
+		break;
+	}
+	delete ss;
+
+	AcquireSRWLockExclusive(&g_srwFileStatus);
+	InterlockedIncrement(&g_fileStatusMap[fid]);
+	ReleaseSRWLockExclusive(&g_srwFileStatus);
+
+	if (threadTaskType < THREAD_TASK_COMPUTE)
+	{
+		ReleaseSemaphore(fileSemAry[threadTaskType + 1], 1, NULL);
+
+		AcquireSRWLockExclusive(&g_srwFileStatus);
+		InterlockedIncrement(&g_fileStatusMap[fid]);
+		ReleaseSRWLockExclusive(&g_srwFileStatus);
+	}
+
+	SetEvent(taskEndEvAry[threadTaskType]);
+
+	HeapFree(GetProcessHeap(), 0, args);
+}
+
+DWORD WINAPI ThreadSchedule::ThreadFuncGlobal(LPVOID param)
+{
+	marker_series workerSeries(std::to_wstring(GetCurrentThreadId()).c_str());
+
+	const HANDLE threadIOCPHandle = *(HANDLE*)(param);
+
+	OVERLAPPED_ENTRY ent[g_taskRemoveCount];
+	ULONG entRemoved;
+
+	while (TRUE)
+	{
+		workerSeries.write_flag(1, _T("Waiting Task..."));
+
+		GetQueuedCompletionStatusEx(threadIOCPHandle, ent, g_taskRemoveCount, &entRemoved, INFINITE, FALSE);
+
+		for (int i = 0; i < entRemoved; i++)
+		{
+			ULONG_PTR key = ent[i].lpCompletionKey;
+			LPOVERLAPPED lpov = ent[i].lpOverlapped;
+
+			// If exit code received, terminate thread.
+			if (key == g_exitCode)
+				return 0;
+
+			ThreadTaskArgs* args = (ThreadTaskArgs*)lpov;
+			DoThreadTaskGlobal(args, key, &workerSeries);
+		}
+	}
+
+	return 0;
+}
+
+void ThreadSchedule::StartThreadTasksGlobal(UINT* rootFIDAry, UINT rootFIDAryCount)
+{
+	marker_series mainThreadSeries(_T("Main Thread - ThreadSchedule"));
+
+	g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_threadCount);
+
+	InitializeSRWLock(&g_srwFileLock);
+	InitializeSRWLock(&g_srwFileHandle);
+	InitializeSRWLock(&g_srwFileIocp);
+	InitializeSRWLock(&g_srwFileBuffer);
+
+	// Create thread handles.
+	for (int t = 0; t < g_threadCount; t++)
+	{
+		g_threadIocpAry[t] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
+
+		DWORD tid;
+		const HANDLE tHandle = CreateThread(NULL, 0, ThreadFuncGlobal, &g_threadIocpAry[t], 0, &tid);
+		if (tHandle == NULL)
+			ExitProcess(3);
+
+		g_threadHandleAry[t] = tHandle;
+	}
+
+	// Create root file locking & status objects.
+	for (int i = 0; i < rootFIDAryCount; i++)
+	{
+		const UINT rootFID = rootFIDAry[i];
+		g_fileLockMap[rootFID] = new FileLock(rootFID);
+		g_fileStatusMap[rootFID] = 0;
+	}
+
+	// [VARIABLE] #Scenario. Main thread assign threads what to do.
+	span* s = new span(mainThreadSeries, 1, _T("Send Tasks"));
+	{
+		for (int i = 0; i < rootFIDAryCount / 4; i++)
+		{
+			PostThreadTask(0, rootFIDAry[i * 4], THREAD_TASK_READ_CALL);
+			PostThreadTask(1, rootFIDAry[i * 4 + 1], THREAD_TASK_READ_CALL);
+			PostThreadTask(2, rootFIDAry[i * 4 + 2], THREAD_TASK_READ_CALL);
+			PostThreadTask(3, rootFIDAry[i * 4 + 3], THREAD_TASK_READ_CALL);
+		}
+
+		for (int i = 0; i < rootFIDAryCount / 2; i++)
+		{
+			PostThreadTask(4, 0, THREAD_TASK_COMPLETION);
+			PostThreadTask(5, 0, THREAD_TASK_COMPLETION);
+		}
+
+		for (int i = 0; i < rootFIDAryCount / 8; i++)
+		{
+			PostThreadTask(6, rootFIDAry[i * 8], THREAD_TASK_COMPUTE);
+			PostThreadTask(7, rootFIDAry[i * 8 + 1], THREAD_TASK_COMPUTE);
+			PostThreadTask(8, rootFIDAry[i * 8 + 2], THREAD_TASK_COMPUTE);
+			PostThreadTask(9, rootFIDAry[i * 8 + 3], THREAD_TASK_COMPUTE);
+			PostThreadTask(10, rootFIDAry[i * 8 + 4], THREAD_TASK_COMPUTE);
+			PostThreadTask(11, rootFIDAry[i * 8 + 5], THREAD_TASK_COMPUTE);
+			PostThreadTask(12, rootFIDAry[i * 8 + 6], THREAD_TASK_COMPUTE);
+			PostThreadTask(13, rootFIDAry[i * 8 + 7], THREAD_TASK_COMPUTE);
+		}
+	}
+	delete s;
+
+	// Send exit code to threads.
+	for (int t = 0; t < g_threadCount; t++)
+		PostThreadExit(t);
+
+	// Wait for thread termination.
+	WaitForMultipleObjects(g_threadCount, g_threadHandleAry, TRUE, INFINITE);
+
+	// [VARIABLE] Release cached datas.
+	{
+		for (int i = 0; i < g_fileBufferMap.size(); i++)
+			VirtualFree(g_fileBufferMap[i], 0, MEM_RELEASE);
+
+		for (int i = 0; i < g_fileIocpMap.size(); i++)
+			CloseHandle(g_fileIocpMap[i]);
+
+		for (int i = 0; i < g_fileHandleMap.size(); i++)
+			CloseHandle(g_fileHandleMap[i]);
+
+		for (int i = 0; i < g_fileLockMap.size(); i++)
+			delete g_fileLockMap[i];
+
+		g_fileBufferMap.clear();
+		g_fileIocpMap.clear();
+		g_fileHandleMap.clear();
+		g_fileLockMap.clear();
+	}
+
+	// Release thread handle/iocp.
+	for (int t = 0; t < g_threadCount; t++)
+	{
+		CloseHandle(g_threadIocpAry[t]);
+		CloseHandle(g_threadHandleAry[t]);
+	}
+}
+
 void ThreadSchedule::ReadCallTaskWork(UINT fid, marker_series& series)
 {
 	SPAN_INIT;

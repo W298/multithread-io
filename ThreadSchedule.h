@@ -70,8 +70,16 @@ namespace ThreadSchedule
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
 
-	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
+	// Global
+	void ReadCallTaskWorkGlobal(UINT fid, Concurrency::diagnostic::marker_series& series);
+	void CompletionTaskWorkGlobal(Concurrency::diagnostic::marker_series& series);
 
+	void DoThreadTaskGlobal(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
+	DWORD WINAPI ThreadFuncGlobal(LPVOID param);
+
+	void StartThreadTasksGlobal(UINT* rootFIDAry, UINT rootFIDAryCount);
+
+	// Inner
 	void ReadCallTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
 	void CompletionTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
 	void ComputeTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
@@ -81,9 +89,11 @@ namespace ThreadSchedule
 	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
 	DWORD WINAPI ThreadFunc(LPVOID param);
 	
+	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
+
+	// Utils
+	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
 	void PostThreadExit(UINT t);
 	void InsertThreadTaskFront(UINT t, UINT* fidAry, UINT* threadTaskTypeAry, UINT count);
-
-	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
 }
