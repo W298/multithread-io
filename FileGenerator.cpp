@@ -57,7 +57,7 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			std::cout << fid << " ";
 
 			// File creation.
-			const UINT64 fileByteSize = max(args.fileSize.minByte, min(args.fileSize.maxByte, round(abs(sizeNormalDist(generator)))));
+			UINT64 fileByteSize = max(args.fileSize.minByte, min(args.fileSize.maxByte, round(abs(sizeNormalDist(generator)))));
 			const UINT fileComputeTime = max(args.fileCompute.minMicroSeconds, min(args.fileCompute.maxMicroSeconds, round(abs(computeNormalDist(generator)))));
 			
 			handleAry[fid] = CreateFileW((path + std::to_wstring(fid)).c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_WRITE_THROUGH, NULL);
@@ -85,6 +85,9 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 				const UINT dependencyPairCount = dependencyVec.size();
 				memcpy(writeAddress, &dependencyPairCount, sizeof(UINT));
 				writeAddress += sizeof(UINT);
+
+				const UINT64 neededFileByteSize = dependencyPairCount * (sizeof(UINT) + sizeof(BYTE)) + 2 * sizeof(UINT);
+				fileByteSize = max(neededFileByteSize, fileByteSize);
 
 				// Write dependency to file.
 				for (UINT i = 0; i < dependencyVec.size(); i++)
