@@ -22,7 +22,7 @@ std::unordered_map<UINT, FileLock*> g_fileLockMap;
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
 std::unordered_map<UINT, BYTE*> g_fileBufferMap;
-std::unordered_map<UINT, std::vector<std::pair<UINT, BYTE>>> g_fileDepMap;
+std::unordered_map<UINT, std::pair<UINT*, UINT>> g_fileDepMap;
 
 DWORD ThreadSchedule::GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize)
 {
@@ -93,25 +93,13 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 	memcpy(&dependencyFileCount, cursor, sizeof(UINT));
 	cursor += sizeof(UINT);
 
-	std::vector<std::pair<UINT, BYTE>> depVec;
-
-	for (int dep = 0; dep < dependencyFileCount; dep++)
-	{
-		UINT depFID;
-		BYTE depType;
-
-		memcpy(&depFID, cursor, sizeof(UINT));
-		cursor += sizeof(UINT);
-
-		memcpy(&depType, cursor, sizeof(BYTE));
-		cursor += sizeof(BYTE);
-
-		depVec.emplace_back(depFID, depType);
-	}
+	UINT* depFIDAry = new UINT[dependencyFileCount];
+	memcpy(depFIDAry, cursor, dependencyFileCount * sizeof(UINT));
+	cursor += dependencyFileCount * sizeof(UINT);
 
 	AcquireSRWLockExclusive(&g_srwFileDep);
 	{
-		g_fileDepMap[fid] = depVec;
+		g_fileDepMap[fid] = std::make_pair(depFIDAry, dependencyFileCount);
 	}
 	ReleaseSRWLockExclusive(&g_srwFileDep);
 
@@ -119,9 +107,9 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 
 	AcquireSRWLockExclusive(&g_srwFileLock);
 	{
-		for (int dep = 0; dep < depVec.size(); dep++)
+		for (int dep = 0; dep < dependencyFileCount; dep++)
 		{
-			const UINT depFID = depVec[dep].first;
+			const UINT depFID = depFIDAry[dep];
 			if (g_fileLockMap.find(depFID) == g_fileLockMap.end())
 				g_fileLockMap[depFID] = new FileLock(depFID);
 		}
@@ -132,10 +120,9 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 	std::vector<UINT> taskTypeVec;
 
 	// [VARIABLE]
-	for (int dep = 0; dep < depVec.size(); dep++)
+	for (int dep = 0; dep < dependencyFileCount; dep++)
 	{
-		const UINT depFID = depVec[dep].first;
-		const UINT depType = depVec[dep].second;
+		const UINT depFID = depFIDAry[dep];
 
 		UINT depFileStatus = 0;
 		AcquireSRWLockShared(&g_srwFileLock);
@@ -144,102 +131,64 @@ void ThreadSchedule::DependencyTaskWork(UINT fid)
 		}
 		ReleaseSRWLockShared(&g_srwFileLock);
 
-		// Just need raw data.
-		if (depType == FileGenerator::FILE_DEPENDENCY_ONLY_READ)
+		if (depFileStatus >= FILE_STATUS_COMPUTE_TASK_COMPLETED)
 		{
-			if (depFileStatus >= FILE_STATUS_COMPLETION_TASK_COMPLETED)
-			{
-				// Raw data guaranteed.
-				continue;
-			}
-			else
-			{
-				switch (depFileStatus)
-				{
-				case FILE_STATUS_READ_CALL_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_READ_CALL);
-
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPLETION);
-					break;
-				}
-				case FILE_STATUS_READ_CALL_TASK_STARTED:
-				case FILE_STATUS_READ_CALL_TASK_COMPLETED:
-				case FILE_STATUS_COMPLETION_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPLETION);
-					break;
-				}
-				case FILE_STATUS_COMPLETION_TASK_STARTED:
-					break;
-				}
-			}
+			// Computed data guaranteed. 
+			continue;
 		}
-		// Need computed data.
-		else 
+		else
 		{
-			if (depFileStatus >= FILE_STATUS_COMPUTE_TASK_COMPLETED)
+			switch (depFileStatus)
 			{
-				// Computed data guaranteed. 
-				continue;
+			case FILE_STATUS_READ_CALL_TASK_WAITING:
+			{
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_READ_CALL);
+
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPLETION);
+
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
+
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
+				break;
 			}
-			else 
+			case FILE_STATUS_READ_CALL_TASK_STARTED:
+			case FILE_STATUS_READ_CALL_TASK_COMPLETED:
+			case FILE_STATUS_COMPLETION_TASK_WAITING:
 			{
-				switch (depFileStatus)
-				{
-				case FILE_STATUS_READ_CALL_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_READ_CALL);
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPLETION);
 
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPLETION);
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
 
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
+				break;
+			}
+			case FILE_STATUS_COMPLETION_TASK_STARTED:
+			case FILE_STATUS_COMPLETION_TASK_COMPLETED:
+			case FILE_STATUS_DEPENDENCY_TASK_WAITING:
+			{
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
 
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-					break;
-				}
-				case FILE_STATUS_READ_CALL_TASK_STARTED:
-				case FILE_STATUS_READ_CALL_TASK_COMPLETED:
-				case FILE_STATUS_COMPLETION_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPLETION);
-
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
-
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-					break;
-				}
-				case FILE_STATUS_COMPLETION_TASK_STARTED:
-				case FILE_STATUS_COMPLETION_TASK_COMPLETED:
-				case FILE_STATUS_DEPENDENCY_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_DEPENDENCY);
-
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-				}
-				case FILE_STATUS_DEPENDENCY_TASK_STARTED:
-				case FILE_STATUS_DEPENDENCY_TASK_COMPLETED:
-				case FILE_STATUS_COMPUTE_TASK_WAITING:
-				{
-					fidVec.push_back(depFID);
-					taskTypeVec.push_back(THREAD_TASK_COMPUTE);
-				}
-				case FILE_STATUS_COMPUTE_TASK_STARTED:
-				case FILE_STATUS_COMPUTE_TASK_COMPLETED:
-					break;
-				}
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
+			}
+			case FILE_STATUS_DEPENDENCY_TASK_STARTED:
+			case FILE_STATUS_DEPENDENCY_TASK_COMPLETED:
+			case FILE_STATUS_COMPUTE_TASK_WAITING:
+			{
+				fidVec.push_back(depFID);
+				taskTypeVec.push_back(THREAD_TASK_COMPUTE);
+			}
+			case FILE_STATUS_COMPUTE_TASK_STARTED:
+			case FILE_STATUS_COMPUTE_TASK_COMPLETED:
+				break;
 			}
 		}
 	}
@@ -254,17 +203,16 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 	{
 		std::vector<HANDLE> waitEvHandleVec;
 		
-		std::vector<std::pair<UINT, BYTE>> depVec;
+		std::pair<UINT*, UINT> depPair;
 		AcquireSRWLockShared(&g_srwFileDep);
 		{
-			depVec = g_fileDepMap[fid];
+			depPair = g_fileDepMap[fid];
 		}
 		ReleaseSRWLockShared(&g_srwFileDep);
 		
-		for (int dep = 0; dep < depVec.size(); dep++)
+		for (int dep = 0; dep < depPair.second; dep++)
 		{
-			const UINT depFID = depVec[dep].first;
-			const UINT depType = depVec[dep].second;
+			const UINT depFID = depPair.first[dep];
 
 			UINT depFileStatus = 0;
 			HANDLE depFileTaskEndEvCompletion = g_fileLockMap[depFID]->taskEndEv[THREAD_TASK_COMPLETION];
@@ -275,16 +223,8 @@ void ThreadSchedule::ComputeTaskWork(UINT fid)
 			}
 			ReleaseSRWLockShared(&g_srwFileLock);
 
-			if (depType == FileGenerator::FILE_DEPENDENCY_ONLY_READ)
-			{
-				if (depFileStatus < FILE_STATUS_COMPLETION_TASK_COMPLETED)
-					waitEvHandleVec.push_back(depFileTaskEndEvCompletion);
-			}
-			else
-			{
-				if (depFileStatus < FILE_STATUS_COMPUTE_TASK_COMPLETED)
-					waitEvHandleVec.push_back(depFileTaskEndEvCompute);
-			}
+			if (depFileStatus < FILE_STATUS_COMPUTE_TASK_COMPLETED)
+				waitEvHandleVec.push_back(depFileTaskEndEvCompute);
 		}
 
 		WaitForMultipleObjects(waitEvHandleVec.size(), waitEvHandleVec.data(), TRUE, INFINITE);
@@ -357,7 +297,7 @@ DWORD ThreadSchedule::HandleLockAcquireFailure(UINT fid, UINT threadTaskType, ma
 			return result;
 		}
 		// If g_waitDependencyFront false, we'll check later.
-
+		
 		// Ignore your job!
 		return WAIT_TIMEOUT;
 	}
@@ -547,16 +487,12 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 	span* s = new span(mainThreadSeries, 1, _T("Send Tasks"));
 	{
 		for (int i = 0; i < rootFIDAryCount; i++)
+		{
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_READ_CALL);
-		
-		for (int i = 0; i < rootFIDAryCount; i++)
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_COMPLETION);
-		
-		for (int i = 0; i < rootFIDAryCount; i++)
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_DEPENDENCY);
-		
-		for (int i = 0; i < rootFIDAryCount; i++)
 			PostThreadTask(i % g_threadCount, rootFIDAry[i], THREAD_TASK_COMPUTE);
+		}
 	}
 	delete s;
 
@@ -581,10 +517,14 @@ void ThreadSchedule::StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount)
 		for (int i = 0; i < g_fileLockMap.size(); i++)
 			delete g_fileLockMap[i];
 
+		for (int i = 0; i < g_fileDepMap.size(); i++)
+			delete[] g_fileDepMap[i].first;
+
 		g_fileBufferMap.clear();
 		g_fileIocpMap.clear();
 		g_fileHandleMap.clear();
 		g_fileLockMap.clear();
+		g_fileDepMap.clear();
 	}
 
 	// Release thread handle/iocp.

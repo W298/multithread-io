@@ -2,13 +2,6 @@
 
 namespace FileGenerator
 {
-	enum FileDependencyType
-	{
-		FILE_DEPENDENCY_NONE,
-		FILE_DEPENDENCY_ONLY_READ,
-		FILE_DEPENDENCY_NEED_COMPUTE
-	};
-
 	enum FileDependencyModel
 	{
 		FILE_DEPENDENCY_PYRAMID,
@@ -37,7 +30,6 @@ namespace FileGenerator
 		FileDependencyModel model;
 		UINT treeDepth;
 		BOOL forceAllDep;
-		FileDependencyType forceAllDepType;
 	};
 	
 	struct FileGenerationArgs

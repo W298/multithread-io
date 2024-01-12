@@ -45,13 +45,14 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 
 	std::random_device rd;
 	std::mt19937 generator(rd());
-	std::uniform_int_distribution uniformIntDist(0, 2);
+	std::uniform_int_distribution uniformIntDist(0, 1);
 	std::normal_distribution<double> sizeNormalDist(args.fileSize.mean, args.fileSize.variance);
 	std::normal_distribution<double> computeNormalDist(args.fileCompute.mean, args.fileCompute.variance);
 
 	UINT fidOffset = 0;
 	for (UINT curDepth = 0; curDepth < args.fileDep.treeDepth; curDepth++)
 	{
+		std::vector<std::vector<UINT>> map;
 		for (UINT fid = fidOffset; fid < fidOffset + depthFileCountAry[curDepth]; fid++)
 		{
 			std::cout << fid << " ";
@@ -71,14 +72,42 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			if (curDepth < args.fileDep.treeDepth - 1) // Exclude leaf file.
 			{
 				// File dependency define.
-				std::vector<std::pair<UINT, BYTE>> dependencyVec;
+				std::vector<UINT> dependencyVec;
 				for (UINT off = 0; off < depthFileCountAry[curDepth + 1]; off++)
 				{
 					const UINT dependencyFID = fidOffset + depthFileCountAry[curDepth] + off;
-					const BYTE fileDependency = args.fileDep.forceAllDep ? args.fileDep.forceAllDepType : uniformIntDist(generator);
+					const BOOL fileDependency = args.fileDep.forceAllDep ? 1 : uniformIntDist(generator);
 
 					if (fileDependency != 0)
-						dependencyVec.emplace_back(dependencyFID, fileDependency);
+						dependencyVec.push_back(dependencyFID);
+				}
+
+				map.push_back(dependencyVec);
+				if (fid == fidOffset + depthFileCountAry[curDepth] - 1)
+				{
+					for (UINT off = 0; off < depthFileCountAry[curDepth + 1]; off++)
+					{
+						const UINT dependencyFID = fidOffset + depthFileCountAry[curDepth] + off;
+						
+						BOOL found = FALSE;
+						for (UINT i = 0; i < map.size(); i++)
+						{
+							for (UINT j = 0; j < map[i].size(); j++)
+							{
+								if (dependencyFID == map[i][j])
+								{
+									found = TRUE;
+									break;
+								}
+							}
+
+							if (found)
+								break;
+						}
+
+						if (FALSE == found)
+							dependencyVec.push_back(dependencyFID);
+					}
 				}
 
 				// Write dependency pair count to file.
@@ -86,20 +115,16 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 				memcpy(writeAddress, &dependencyPairCount, sizeof(UINT));
 				writeAddress += sizeof(UINT);
 
-				const UINT64 neededFileByteSize = dependencyPairCount * (sizeof(UINT) + sizeof(BYTE)) + 2 * sizeof(UINT);
+				// If needed file size for writing dependencies exceeds random generated file size, replace it.
+				const UINT64 neededFileByteSize = dependencyPairCount * sizeof(UINT) + 2 * sizeof(UINT);
 				fileByteSize = max(neededFileByteSize, fileByteSize);
 
-				// Write dependency to file.
+				// Write dependency FID to file.
 				for (UINT i = 0; i < dependencyVec.size(); i++)
 				{
-					const UINT dependencyFID = dependencyVec[i].first;
-					const BYTE fileDependency = dependencyVec[i].second;
-
+					const UINT dependencyFID = dependencyVec[i];
 					memcpy(writeAddress, &dependencyFID, sizeof(UINT));
 					writeAddress += sizeof(UINT);
-
-					memcpy(writeAddress, &fileDependency, sizeof(BYTE));
-					writeAddress += sizeof(BYTE);
 				}
 
 				WriteFile(handleAry[fid], buffer, fileByteSize, NULL, NULL);
@@ -119,7 +144,8 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 
 	// Release memory.
 	for (UINT64 fid = 0; fid < args.totalFileCount; fid++)
-	CloseHandle(handleAry[fid]);
+		CloseHandle(handleAry[fid]);
+	
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	delete[] handleAry;
 
