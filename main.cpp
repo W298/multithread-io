@@ -17,8 +17,9 @@ int main()
 	for (int i = 0; i < 248; i++)
 		rootFIDAry[i] = i;
 
-	// StartThreadTasks(rootFIDAry, 248);
-	StartThreadTasksGlobal(rootFIDAry, 248);
+	StartThreadTasks(rootFIDAry, 248);
+
+	delete[] rootFIDAry;
 
 	// RemoveDummyFiles(totalFileCount);
 

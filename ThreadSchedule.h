@@ -33,6 +33,12 @@ namespace ThreadSchedule
 		FILE_STATUS_COMPUTE_TASK_COMPLETED
 	};
 
+	enum SimulationType
+	{
+		SIM_A,
+		SIM_B
+	};
+
 	struct ThreadTaskArgs
 	{
 		UINT FID;
@@ -69,17 +75,8 @@ namespace ThreadSchedule
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
+	constexpr SimulationType simType = SIM_B;
 
-	// Global
-	void ReadCallTaskWorkGlobal(UINT fid, Concurrency::diagnostic::marker_series& series);
-	void CompletionTaskWorkGlobal(Concurrency::diagnostic::marker_series& series);
-
-	void DoThreadTaskGlobal(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
-	DWORD WINAPI ThreadFuncGlobal(LPVOID param);
-
-	void StartThreadTasksGlobal(UINT* rootFIDAry, UINT rootFIDAryCount);
-
-	// Inner
 	void ReadCallTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
 	void CompletionTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
 	void ComputeTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
@@ -91,7 +88,6 @@ namespace ThreadSchedule
 	
 	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
 
-	// Utils
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
 	void PostThreadExit(UINT t);
