@@ -54,8 +54,8 @@ namespace ThreadSchedule
 		{
 			for (int i = 0; i < 3; i++)
 			{
-				sem[i] = CreateSemaphoreW(NULL, (UINT)(i == 0), 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
-				taskEndEv[i] = CreateEvent(NULL, TRUE, FALSE, (std::to_wstring(fid) + L"-end-ev" + std::to_wstring(i)).c_str());
+				sem[i] = CreateSemaphoreW(NULL, i == 0, 1, (std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
+				taskEndEv[i] = CreateEvent(NULL, TRUE, FALSE, (std::to_wstring(fid) + L"-taskEndEv" + std::to_wstring(i)).c_str());
 			}
 		}
 
@@ -75,23 +75,23 @@ namespace ThreadSchedule
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
-	constexpr SimulationType simType = SIM_ROLE_SPECIFIED_THREAD;
+	constexpr SimulationType g_simType = SIM_UNIVERSAL_THREAD;
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
 	void ComputeTaskWork(UINT fid);
 
-	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, Concurrency::diagnostic::marker_series& workerSeries);
+	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, const Concurrency::diagnostic::marker_series& series);
 	
-	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series& workerSeries);
+	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, const Concurrency::diagnostic::marker_series& series);
 
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
 
-	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
+	void StartThreadTasks(const UINT* rootFIDAry, UINT rootFIDAryCount);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
 	void PostThreadExit(UINT t);
-	void InsertThreadTaskFront(UINT t, UINT* fidAry, UINT* threadTaskTypeAry, UINT count);
+	void InsertThreadTaskFront(UINT t, const UINT* fidAry, const UINT* threadTaskTypeAry, UINT count);
 }

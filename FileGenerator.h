@@ -11,35 +11,35 @@ namespace FileGenerator
 
 	struct FileSizeArgs
 	{
-		UINT64 minByte;
-		UINT64 maxByte;
-		UINT mean;
-		UINT variance;
+		UINT64 MinByte;
+		UINT64 MaxByte;
+		UINT Mean;
+		UINT Variance;
 	};
 
 	struct FileComputeArgs
 	{
-		UINT minMicroSeconds;
-		UINT maxMicroSeconds;
-		UINT mean;
-		UINT variance;
+		UINT MinMicroSeconds;
+		UINT MaxMicroSeconds;
+		UINT Mean;
+		UINT Variance;
 	};
 
 	struct FileDependencyArgs
 	{
-		FileDependencyModel model;
-		UINT treeDepth;
-		BOOL forceAllDep;
+		FileDependencyModel Model;
+		UINT TreeDepth;
+		BOOL ForceAllDep;
 	};
 	
 	struct FileGenerationArgs
 	{
-		UINT64 totalFileCount;
-		FileSizeArgs fileSize;
-		FileComputeArgs fileCompute;
-		FileDependencyArgs fileDep;
+		UINT64 TotalFileCount;
+		FileSizeArgs FileSize;
+		FileComputeArgs FileCompute;
+		FileDependencyArgs FileDep;
 	};
 
-	void GenerateDummyFiles(const FileGenerationArgs fileGenerationArgs);
+	void GenerateDummyFiles(FileGenerationArgs fileGenerationArgs);
 	void RemoveDummyFiles(UINT64 totalFileCount);
 }
