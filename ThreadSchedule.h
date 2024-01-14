@@ -2,7 +2,7 @@
 
 namespace ThreadSchedule
 {
-	enum ThreadType
+	enum ThreadRoleType
 	{
 		THREAD_TYPE_GENERAL_NON_OVERLAP,
 		THREAD_TYPE_GENERAL,
@@ -35,8 +35,8 @@ namespace ThreadSchedule
 
 	enum SimulationType
 	{
-		SIM_A,
-		SIM_B
+		SIM_UNIVERSAL_THREAD,
+		SIM_ROLE_SPECIFIED_THREAD
 	};
 
 	struct ThreadTaskArgs
@@ -75,17 +75,19 @@ namespace ThreadSchedule
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
-	constexpr SimulationType simType = SIM_B;
+	constexpr SimulationType simType = SIM_ROLE_SPECIFIED_THREAD;
 
-	void ReadCallTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
-	void CompletionTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
-	void ComputeTaskWork(UINT fid, Concurrency::diagnostic::marker_series& workerSeries);
+	void ReadCallTaskWork(UINT fid);
+	void CompletionTaskWork(UINT fid);
+	void ComputeTaskWork(UINT fid);
 
-	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
+	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, Concurrency::diagnostic::marker_series& workerSeries);
 	
-	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series* workerSeries);
-	DWORD WINAPI ThreadFunc(LPVOID param);
-	
+	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, Concurrency::diagnostic::marker_series& workerSeries);
+
+	DWORD WINAPI UniversalThreadFunc(LPVOID param);
+	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
+
 	void StartThreadTasks(UINT* rootFIDAry, UINT rootFIDAryCount);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
