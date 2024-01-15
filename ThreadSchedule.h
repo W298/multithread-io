@@ -4,9 +4,10 @@ namespace ThreadSchedule
 {
 	enum ThreadRoleType
 	{
-		NONE						= 0x00000000,
-		THREAD_ROLE_READ_FILE_CALL	= 0x00000001,
-		THREAD_ROLE_COMPUTE			= 0x00000010,
+		THREAD_ROLE_READFILE_CALL_ONLY,
+		THREAD_ROLE_COMPUTE_ONLY,
+		THREAD_ROLE_COMPUTE_AND_READFILE,
+		THREAD_ROLE_BOTH
 	};
 
 	enum ThreadTaskType
@@ -65,7 +66,7 @@ namespace ThreadSchedule
 		}
 	};
 
-	constexpr UINT g_threadCount = 14;
+	constexpr UINT g_threadCount = 12;
 	constexpr UINT g_taskRemoveCount = 10;
 	constexpr UINT g_exitCode = 4294967295;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
@@ -73,8 +74,7 @@ namespace ThreadSchedule
 	constexpr BOOL g_waitDependencyFront = TRUE;
 	constexpr SimulationType g_simType = SIM_ROLE_SPECIFIED_THREAD;
 	
-	constexpr UINT g_readThreadCount = 2;				// Only avaliable on SIM_ROLE_SPECIFIED_THREAD.
-	constexpr BOOL g_computeThreadDoReadTask = TRUE;	// Only avaliable on SIM_ROLE_SPECIFIED_THREAD.
+	constexpr UINT g_threadRoleCount[4] = { 0, 0, 0, 12 };
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
@@ -87,7 +87,7 @@ namespace ThreadSchedule
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
 
-	double StartThreadTasks(const UINT* rootFIDAry, UINT rootFIDAryCount);
+	std::pair<double, UINT64> StartThreadTasks(const UINT* rootFIDAry, UINT rootFIDAryCount);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
