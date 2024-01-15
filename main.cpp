@@ -29,7 +29,7 @@ int main()
 	};
 	FileGenerationArgs fArgs = 
 	{
-		250u,						// TotalFileCount
+		10000u,						// TotalFileCount
 		fileSize,					// FileSize
 		fileCompute,				// FileCompute
 		fileDep						// FileDep
@@ -37,15 +37,18 @@ int main()
 
 	// GenerateDummyFiles(fArgs);
 
-	UINT* rootFIDAry = new UINT[248];
-	for (int i = 0; i < 248; i++)
+	constexpr UINT testFileCount = 1000;
+	constexpr UINT testCount = 10;
+
+	UINT rootFIDAry[testFileCount];
+	for (int i = 0; i < testFileCount; i++)
 		rootFIDAry[i] = i;
+	
+	double resultAry[testCount];
+	for (int i = 0; i < testCount; i++)
+		resultAry[i] = StartThreadTasks(rootFIDAry, testFileCount);
 
-	StartThreadTasks(rootFIDAry, 248);
-
-	delete[] rootFIDAry;
-
-	// RemoveDummyFiles(totalFileCount);
+	// RemoveDummyFiles(248);
 
 	return 0;
 }

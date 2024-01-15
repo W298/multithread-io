@@ -1,21 +1,42 @@
 #include "pch.h"
 #include "ThreadSchedule.h"
 
+#define DO_TASK(key, type) \
+	const UINT fid = static_cast<UINT>(key); \
+	if (fid == g_exitCode) break; \
+	if (fid >= g_fileCount) ExitProcess(-5); \
+	SPAN_START(type, type == THREAD_TASK_READ_CALL ? _T("Read Call Task (FID %d)") : _T("Compute Task (FID %d)"), fid); \
+	if (type == THREAD_TASK_READ_CALL) \
+		ReadCallTaskWork(fid); \
+	else \
+		ComputeTaskWork(fid); \
+	SPAN_END;
+
+#define WAIT_AND_DO_TASK(pRet, pKey, pLpov, type) \
+	GetQueuedCompletionStatus(type == THREAD_TASK_READ_CALL ? g_globalTaskQueue : g_globalWaitingQueue, pRet, pKey, pLpov, INFINITE); \
+	DO_TASK(*pKey, type);
+
 using namespace Concurrency::diagnostic;
 using namespace ThreadSchedule;
+
+UINT g_fileCount;
 
 // Thread works.
 HANDLE g_globalTaskQueue;
 HANDLE g_globalWaitingQueue;
-HANDLE g_globalFinishQueue;
 HANDLE g_threadHandleAry[g_threadCount];
 HANDLE g_threadIocpAry[g_threadCount];
 
+// SRW Locks.
 SRWLOCK g_srwFileStatus;
 SRWLOCK g_srwFileLock;
 SRWLOCK g_srwFileHandle;
 SRWLOCK g_srwFileIocp;
 SRWLOCK g_srwFileBuffer;
+SRWLOCK g_srwFileFinish;
+
+// File finish set.
+std::set<UINT> g_fileFinishSet;
 
 // File cache data.
 std::unordered_map<UINT, UINT> g_fileStatusMap;
@@ -177,8 +198,19 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 
 FINALIZE:
 	SPAN_END;
-	OVERLAPPED ov = { 0 };
-	PostQueuedCompletionStatus(g_globalFinishQueue, 0, fid, &ov);
+	AcquireSRWLockExclusive(&g_srwFileFinish);
+	g_fileFinishSet.insert(fid);
+	if (g_fileFinishSet.size() == g_fileCount)
+	{
+		std::cout << "Finished" << "\n";
+		for (UINT t = 0; t < g_threadCount; t++)
+		{
+			OVERLAPPED ov = { 0 };
+			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
+			PostQueuedCompletionStatus(g_globalWaitingQueue, 0, g_exitCode, &ov);
+		}
+	}
+	ReleaseSRWLockExclusive(&g_srwFileFinish);
 }
 
 // #Variable
@@ -341,39 +373,57 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 	SERIES_INIT(std::to_wstring(GetCurrentThreadId()).c_str());
 	SPAN_INIT;
 
-	const UINT_PTR threadRole = reinterpret_cast<UINT_PTR>(param);
+	const BYTE threadRole = reinterpret_cast<BYTE>(param);
 
 	DWORD ret;
 	ULONG_PTR key;
 	LPOVERLAPPED lpov;
 
-	if (threadRole == THREAD_TYPE_CALL_ONLY)
+	// #Variable
+	if (threadRole & THREAD_ROLE_COMPUTE)
 	{
 		while (TRUE)
 		{
-			GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, INFINITE);
-
-			SPAN_START(0, _T("Read Call Task"));
-			ReadCallTaskWork(static_cast<UINT>(key));
-			SPAN_END;
+			if (FALSE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
+			{
+				// If no compute task exists...
+				// Check read call task exists immediately, if flag is on.
+				if (threadRole & THREAD_ROLE_READ_FILE_CALL)
+				{
+					// We'll not wait read call task.
+					if (TRUE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
+					{
+						// If exists, do read call task.
+						DO_TASK(key, THREAD_TASK_READ_CALL);
+					}
+					else
+					{
+						WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
+					}
+				}
+				else
+				{
+					WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
+				}
+			}
+			else
+			{
+				DO_TASK(key, THREAD_TASK_COMPUTE);
+			}
 		}
 	}
-	else if (threadRole == THREAD_TYPE_COMPUTE_ONLY)
+	else if (threadRole & THREAD_ROLE_READ_FILE_CALL)
 	{
 		while (TRUE)
 		{
-			GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, INFINITE);
-
-			SPAN_START(2, _T("Compute Task"));
-			ComputeTaskWork(static_cast<UINT>(key));
-			SPAN_END;
+			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_READ_CALL);
 		}
 	}
 
 	return 0;
 }
 
-void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFIDAryCount)
+double ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFIDAryCount)
 {
 	SERIES_INIT(_T("Main Thread"));
 	SPAN_INIT;
@@ -383,12 +433,13 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 	InitializeSRWLock(&g_srwFileIocp);
 	InitializeSRWLock(&g_srwFileBuffer);
 
+	g_fileCount = rootFIDAryCount;
+
 	// #Variable Initialize global IOCP.
 	if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
 	{
 		g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_threadCount);
 		g_globalWaitingQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_threadCount);
-		g_globalFinishQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_threadCount);
 	}
 
 	// #Variable Create threads.
@@ -404,7 +455,19 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 		}
 		else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
 		{
-			const UINT_PTR threadType = t < 5 ? THREAD_TYPE_CALL_ONLY : THREAD_TYPE_COMPUTE_ONLY;
+			//#Variable Assign thread roles.
+			BYTE threadType = 0x00000000;
+			if (t < g_readThreadCount)
+			{
+				threadType |= THREAD_ROLE_READ_FILE_CALL;
+			}
+			else
+			{
+				threadType |= THREAD_ROLE_COMPUTE;
+				if (g_computeThreadDoReadTask)
+					threadType |= THREAD_ROLE_READ_FILE_CALL;
+			}
+
 			threadHandle = CreateThread(NULL, 0, RoleSpecifiedThreadFunc, reinterpret_cast<LPVOID>(threadType), 0, &tid);
 		}
 
@@ -429,8 +492,13 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 		// Don't need to create lock object.
 	}
 
+	Sleep(1000);
+
+	SPAN_START(0, _T("Loading Time"));
+	TIMER_INIT;
+	TIMER_START;
+
 	// #Variable Post tasks.
-	SPAN_START(3, _T("Send Tasks"));
 	if (g_simType == SIM_UNIVERSAL_THREAD)
 	{
 		// 1. Uniformly distribute.
@@ -476,32 +544,22 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, rootFIDAry[i], &ov);
 		}
 	}
-	SPAN_END;
-
-	// #Variable Wait for thread termination.
+	
+	// #Variable Post thread termination.
 	if (g_simType == SIM_UNIVERSAL_THREAD)
 	{
+		// Post exit to all threads.
 		for (UINT t = 0; t < g_threadCount; t++)
 			PostThreadExit(t);
-
-		WaitForMultipleObjects(g_threadCount, g_threadHandleAry, TRUE, INFINITE);
 	}
 	else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
 	{
-		UINT finishedFileCount = 0;
-
-		LPOVERLAPPED_ENTRY entAry = new OVERLAPPED_ENTRY[rootFIDAryCount];
-		ULONG entRemoved;
-
-		while (finishedFileCount < rootFIDAryCount)
-		{
-			GetQueuedCompletionStatusEx(g_globalFinishQueue, entAry, rootFIDAryCount, &entRemoved, 0L, FALSE);
-			finishedFileCount += entRemoved;
-		}
-
-		for (UINT t = 0; t < g_threadCount; t++)
-			TerminateThread(g_threadHandleAry[t], 100);
+		// Post exit on last compute task.
 	}
+
+	WaitForMultipleObjects(g_threadCount, g_threadHandleAry, TRUE, INFINITE);
+	TIMER_STOP;
+	SPAN_END;
 
 	// #Variable Release cached data.
 	{
@@ -517,6 +575,7 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 		for (UINT i = 0; i < g_fileLockMap.size(); i++)
 			delete g_fileLockMap[i];
 
+		g_fileFinishSet.clear();
 		g_fileBufferMap.clear();
 		g_fileIocpMap.clear();
 		g_fileHandleMap.clear();
@@ -528,7 +587,6 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 	{
 		CloseHandle(g_globalTaskQueue);
 		CloseHandle(g_globalWaitingQueue);
-		CloseHandle(g_globalFinishQueue);
 	}
 
 	// #Variable Release thread handle/IOCP.
@@ -539,6 +597,8 @@ void ThreadSchedule::StartThreadTasks(const UINT* rootFIDAry, const UINT rootFID
 
 		CloseHandle(g_threadHandleAry[t]);
 	}
+
+	return el * 1000;
 }
 
 DWORD ThreadSchedule::GetAlignedByteSize(const PLARGE_INTEGER fileByteSize, const DWORD sectorSize)
