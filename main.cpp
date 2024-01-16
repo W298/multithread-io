@@ -9,30 +9,30 @@ int main()
 {
 	FileSizeArgs fileSize =
 	{
-		512u,						// MinByte
-		10485760u,					// MaxByte
-		1048576u,						// Mean
-		1048576u						// Variance
+		512u,								// MinByte
+		10485760u,							// MaxByte
+		1048576u,							// Mean
+		1048576u							// Variance
 	};
 	FileComputeArgs fileCompute = 
 	{
-		50u,						// MinMicroSeconds
-		5000u,						// MaxMicroSeconds
-		400u,						// Mean
-		400u						// Variance
+		50u,								// MinMicroSeconds
+		5000u,								// MaxMicroSeconds
+		400u,								// Mean
+		400u								// Variance
 	};
 	FileDependencyArgs fileDep = 
 	{
-		FILE_DEPENDENCY_PYRAMID,	// Model
-		5u,							// TreeDepth
-		FALSE						// ForceAllDep
+		FILE_DEPENDENCY_PYRAMID,			// Model
+		5u,									// TreeDepth
+		FALSE								// ForceAllDep
 	};
 	FileGenerationArgs fArgs = 
 	{
-		10000u,						// TotalFileCount
-		fileSize,					// FileSize
-		fileCompute,				// FileCompute
-		fileDep						// FileDep
+		10000u,								// TotalFileCount
+		fileSize,							// FileSize
+		fileCompute,						// FileCompute
+		fileDep								// FileDep
 	};
 
 	// GenerateDummyFiles(fArgs);
@@ -58,27 +58,59 @@ int main()
 		mean += resultAry[i];
 	mean /= testCount;
 
-	printf("File size: %d ~ %d, Mean(%d), Variance(%d)\n", fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance);
-	printf("File compute time: %d ~ %d, Mean(%d), Variance(%d)\n", fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance);
-	printf("Total file size: %f MiB\n\n", totalFileSize / (1024.0 * 1024.0));
-	printf("Thread count: %d\n", g_threadCount);
-	printf("Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n", g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3]);
-	printf("Test file count: %d\n", testFileCount);
-	printf("Mean time: %f ms\n\n", mean);
+	printf("\
+File size: %d ~ %d, Mean(%d), Variance(%d)\n\
+File compute time: %d ~ %d, Mean(%d), Variance(%d)\n\
+Total file size: %f MiB\n\n\
+\
+Thread count: %d\n\
+Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n\
+Read Call Task Split(%d) / Compute Task Split(%d)\n\
+\
+Test file count: %d\n\
+Test count: %d\n\
+Mean time: %f ms\n\n", 
+		fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
+		fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
+		totalFileSize / (1024.0 * 1024.0),
+		g_threadCount,
+		g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3],
+		g_readCallLimit, g_computeLimit,
+		testFileCount,
+		testCount,
+		mean);
+
 	for (int i = 0; i < testCount; i++)
 		printf("%f ms\n", resultAry[i]);
 
 	FILE* log;
 	fopen_s(&log, "log.txt", "w");
-	fprintf(log, "File size: %d ~ %d, Mean(%d), Variance(%d)\n", fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance);
-	fprintf(log, "File compute time: %d ~ %d, Mean(%d), Variance(%d)\n", fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance);
-	fprintf(log, "Total file size: %d MiB\n\n", totalFileSize / (1024.0 * 1024.0));
-	fprintf(log, "Thread count: %d\n", g_threadCount);
-	fprintf(log, "Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n", g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3]);
-	fprintf(log, "Test file count: %d\n", testFileCount);
-	fprintf(log, "Mean time: %f ms\n\n", mean);
+
+	fprintf(log, "\
+File size: %d ~ %d, Mean(%d), Variance(%d)\n\
+File compute time: %d ~ %d, Mean(%d), Variance(%d)\n\
+Total file size: %f MiB\n\n\
+\
+Thread count: %d\n\
+Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n\
+Read Call Task Split(%d) / Compute Task Split(%d)\n\
+\
+Test file count: %d\n\
+Test count: %d\n\
+Mean time: %f ms\n\n",
+		fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
+		fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
+		totalFileSize / (1024.0 * 1024.0),
+		g_threadCount,
+		g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3],
+		g_readCallLimit, g_computeLimit,
+		testFileCount,
+		testCount,
+		mean);
+
 	for (int i = 0; i < testCount; i++)
 		fprintf(log, "%f ms\n", resultAry[i]);
+
 	fclose(log);
 
 	// RemoveDummyFiles(248);

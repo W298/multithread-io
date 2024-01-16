@@ -75,6 +75,8 @@ namespace ThreadSchedule
 	constexpr SimulationType g_simType = SIM_ROLE_SPECIFIED_THREAD;
 	
 	constexpr UINT g_threadRoleCount[4] = { 0, 0, 0, 12 };
+	constexpr UINT g_readCallLimit = 1024u;
+	constexpr UINT g_computeLimit = 1024u;
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);

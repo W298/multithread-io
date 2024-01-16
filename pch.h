@@ -16,7 +16,8 @@
 	span* s = nullptr
 #define SPAN_START(cat, name, ...) \
 	s = new span(series, cat, name, __VA_ARGS__)
-#define SPAN_END delete s
+#define SPAN_END \
+    delete s
 
 #define TIMER_INIT \
     LARGE_INTEGER freq; \

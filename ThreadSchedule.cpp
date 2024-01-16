@@ -22,6 +22,10 @@ using namespace ThreadSchedule;
 UINT g_fileCount;
 UINT64 g_totalFileSize;
 
+UINT g_currentReadCallCount;
+UINT g_currentComputeCount;
+BOOL g_currentTaskMode;
+
 // Thread works.
 HANDLE g_globalTaskQueue;
 HANDLE g_globalWaitingQueue;
@@ -35,9 +39,7 @@ SRWLOCK g_srwFileHandle;
 SRWLOCK g_srwFileIocp;
 SRWLOCK g_srwFileBuffer;
 SRWLOCK g_srwFileFinish;
-
-// File finish set.
-std::set<UINT> g_fileFinishSet;
+SRWLOCK g_srwTaskMode;
 
 // File cache data.
 std::unordered_map<UINT, UINT> g_fileStatusMap;
@@ -45,6 +47,8 @@ std::unordered_map<UINT, FileLock*> g_fileLockMap;
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
 std::unordered_map<UINT, HANDLE> g_fileIocpMap;
 std::unordered_map<UINT, BYTE*> g_fileBufferMap;
+std::unordered_map<UINT, UINT> g_fileBufferSizeMap;
+std::set<UINT> g_fileFinishSet;
 
 void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 {
@@ -116,6 +120,9 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 		if (FALSE == g_fileBufferMap.contains(fid))
 			g_fileBufferMap[fid] = fileBuffer;
 		
+		if (FALSE == g_fileBufferSizeMap.contains(fid))
+			g_fileBufferSizeMap[fid] = fileByteSize.QuadPart;
+
 		g_totalFileSize += fileByteSize.QuadPart;
 	}
 	ReleaseSRWLockExclusive(&g_srwFileBuffer);
@@ -162,9 +169,11 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	QueryPerformanceCounter(&start);
 
 	BYTE* bufferAddress = nullptr;
+	UINT bufferSize = 0;
 	AcquireSRWLockShared(&g_srwFileBuffer);
 	{
 		bufferAddress = g_fileBufferMap[fid];
+		bufferSize = g_fileBufferSizeMap[fid];
 	}
 	ReleaseSRWLockShared(&g_srwFileBuffer);
 
@@ -173,11 +182,11 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	// SPAN_END;
 
 	// SPAN_START(2, _T("Start Compute"));
-	float elapsedMicroSeconds = 0.0f;
 
 	LPVOID buf = nullptr;
 	SIZE_T bufSize = 0;
-
+	
+	float elapsedMicroSeconds = 0.0f;
 	while (elapsedMicroSeconds <= timeOverMicroSeconds)
 	{
 		try
@@ -206,28 +215,29 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 			if (elapsedMicroSeconds > timeOverMicroSeconds)
 				goto FINALIZE;
 
-			// Computing.
+			// Calculate checksum.
 			{
-				int num = 1, primes = 0;
-				for (num = 1; num <= 5; num++)
-				{
-					int i = 2;
-					while (i <= num)
-					{
-						QueryPerformanceCounter(&end);
-						elapsedMicroSeconds = (
-							static_cast<float>(end.QuadPart - start.QuadPart) /
-							static_cast<float>(freq.QuadPart)) * 1000.0f * 1000.0f;
-						if (elapsedMicroSeconds > timeOverMicroSeconds)
-							goto FINALIZE;
+				int checkSum = 0;
+				int sum = 0;
 
-						if (num % i == 0)
-							break;
-						i++;
-					}
-					if (i == num)
-						primes++;
+				for (int i = 0; i < bufferSize; i++)
+				{
+					sum += bufferAddress[i];
+
+					QueryPerformanceCounter(&end);
+					elapsedMicroSeconds = (
+						static_cast<float>(end.QuadPart - start.QuadPart) /
+						static_cast<float>(freq.QuadPart)) * 1000.0f * 1000.0f;
+					if (elapsedMicroSeconds > timeOverMicroSeconds)
+						goto FINALIZE;
 				}
+
+				checkSum = sum;
+				checkSum = checkSum & 0xFF;
+				checkSum = ~checkSum + 1;
+
+				int res = checkSum + sum;
+				res = res & 0xFF;
 			}
 
 			VirtualUnlock(buf, bufSize);
@@ -239,8 +249,12 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 FINALIZE:
 	// SPAN_END;
 	VirtualFree(bufferAddress, 0, MEM_RELEASE);
-	CloseHandle(g_fileIocpMap[fid]);
-	CloseHandle(g_fileHandleMap[fid]);
+	
+	if (g_fileIocpMap.contains(fid))
+		CloseHandle(g_fileIocpMap[fid]);
+	
+	if (g_fileHandleMap.contains(fid))
+		CloseHandle(g_fileHandleMap[fid]);
 
 	AcquireSRWLockExclusive(&g_srwFileFinish);
 	g_fileFinishSet.insert(fid);
@@ -428,16 +442,61 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 	{
 		while (TRUE)
 		{
-			if (FALSE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
+			if (FALSE == g_currentTaskMode)
 			{
-				if (TRUE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
+				// Read call task exists...
+				if (TRUE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
 				{
-					DO_TASK(key, THREAD_TASK_COMPUTE);
+					if (key == g_exitCode) break;
+
+					AcquireSRWLockExclusive(&g_srwTaskMode);
+					if (g_currentReadCallCount < g_readCallLimit)
+					{
+						g_currentReadCallCount++;
+						if (g_currentReadCallCount == g_readCallLimit)
+						{
+							g_currentTaskMode = TRUE;
+							g_currentReadCallCount = 0;
+						}
+						ReleaseSRWLockExclusive(&g_srwTaskMode);
+
+						DO_TASK(key, THREAD_TASK_READ_CALL);
+					}
+					else
+					{
+						ReleaseSRWLockExclusive(&g_srwTaskMode);
+					}
+				}
+				else
+				{
+					if (TRUE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
+					{
+						DO_TASK(key, THREAD_TASK_COMPUTE);
+					}
 				}
 			}
 			else
 			{
-				DO_TASK(key, THREAD_TASK_READ_CALL);
+				if (TRUE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
+				{
+					AcquireSRWLockExclusive(&g_srwTaskMode);
+					if (g_currentComputeCount < g_computeLimit)
+					{
+						g_currentComputeCount++;
+						if (g_currentComputeCount == g_computeLimit)
+						{
+							g_currentTaskMode = FALSE;
+							g_currentComputeCount = 0;
+						}
+						ReleaseSRWLockExclusive(&g_srwTaskMode);
+
+						DO_TASK(key, THREAD_TASK_COMPUTE);
+					}
+					else
+					{
+						ReleaseSRWLockExclusive(&g_srwTaskMode);
+					}
+				}
 			}
 		}
 	}
@@ -493,6 +552,7 @@ std::pair<double, UINT64> ThreadSchedule::StartThreadTasks(const UINT* rootFIDAr
 	InitializeSRWLock(&g_srwFileHandle);
 	InitializeSRWLock(&g_srwFileIocp);
 	InitializeSRWLock(&g_srwFileBuffer);
+	InitializeSRWLock(&g_srwTaskMode);
 
 	g_fileCount = rootFIDAryCount;
 
@@ -622,11 +682,12 @@ std::pair<double, UINT64> ThreadSchedule::StartThreadTasks(const UINT* rootFIDAr
 		for (UINT i = 0; i < g_fileLockMap.size(); i++)
 			delete g_fileLockMap[i];
 
-		g_fileFinishSet.clear();
 		g_fileBufferMap.clear();
+		g_fileBufferSizeMap.clear();
 		g_fileIocpMap.clear();
 		g_fileHandleMap.clear();
 		g_fileLockMap.clear();
+		g_fileFinishSet.clear();
 	}
 
 	// #Variable Close global IOCP.
