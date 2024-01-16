@@ -38,25 +38,19 @@ int main()
 	// GenerateDummyFiles(fArgs);
 
 	constexpr UINT testFileCount = 10000;
-	constexpr UINT testCount = 1;
 
 	UINT rootFIDAry[testFileCount];
 	for (int i = 0; i < testFileCount; i++)
 		rootFIDAry[i] = i;
 	
-	UINT64 totalFileSize = 0;
-	double resultAry[testCount];
-	for (int i = 0; i < testCount; i++)
-	{
-		std::pair<double, UINT64> pair = StartThreadTasks(rootFIDAry, testFileCount);
-		resultAry[i] = pair.first;
-		totalFileSize = pair.second;
-	}
+	TestArgument args = { rootFIDAry, testFileCount, 8, 40, 40 };
 
-	double mean = 0;
-	for (int i = 0; i < testCount; i++)
-		mean += resultAry[i];
-	mean /= testCount;
+	UINT64 totalFileSize = 0;
+	double resultAry;
+
+	TestResult res = StartThreadTasks(args);
+	resultAry = res.elapsedMiliseconds;
+	totalFileSize = res.totalFileSize;
 
 	printf("\
 File size: %d ~ %d, Mean(%d), Variance(%d)\n\
@@ -68,20 +62,15 @@ Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)
 Read Call Task Split(%d) / Compute Task Split(%d)\n\
 \
 Test file count: %d\n\
-Test count: %d\n\
-Mean time: %f ms\n\n", 
-		fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-		fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
-		totalFileSize / (1024.0 * 1024.0),
-		g_threadCount,
-		g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3],
-		g_readCallLimit, g_computeLimit,
-		testFileCount,
-		testCount,
-		mean);
-
-	for (int i = 0; i < testCount; i++)
-		printf("%f ms\n", resultAry[i]);
+Elapsed time: %f ms\n\n\n\n\n\n",
+	fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
+	fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
+	totalFileSize / (1024.0 * 1024.0),
+	args.threadCount,
+	0, 0, 0, args.threadCount,
+	args.readCallLimit, args.computeLimit,
+	testFileCount,
+	resultAry);
 
 	FILE* log;
 	fopen_s(&log, "log.txt", "w");
@@ -96,20 +85,15 @@ Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)
 Read Call Task Split(%d) / Compute Task Split(%d)\n\
 \
 Test file count: %d\n\
-Test count: %d\n\
-Mean time: %f ms\n\n",
-		fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-		fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
-		totalFileSize / (1024.0 * 1024.0),
-		g_threadCount,
-		g_threadRoleCount[0], g_threadRoleCount[1], g_threadRoleCount[2], g_threadRoleCount[3],
-		g_readCallLimit, g_computeLimit,
-		testFileCount,
-		testCount,
-		mean);
-
-	for (int i = 0; i < testCount; i++)
-		fprintf(log, "%f ms\n", resultAry[i]);
+Elapsed time: %f ms\n\n\n\n\n\n",
+	fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
+	fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
+	totalFileSize / (1024.0 * 1024.0),
+	args.threadCount,
+	0, 0, 0, args.threadCount,
+	args.readCallLimit, args.computeLimit,
+	testFileCount,
+	resultAry);
 
 	fclose(log);
 

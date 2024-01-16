@@ -41,6 +41,21 @@ namespace ThreadSchedule
 		UINT FID;
 	};
 
+	struct TestArgument
+	{
+		UINT* fidAry;
+		UINT fileCount;
+		UINT threadCount;
+		UINT readCallLimit;
+		UINT computeLimit;
+	};
+
+	struct TestResult
+	{
+		double elapsedMiliseconds;
+		UINT64 totalFileSize;
+	};
+
 	class FileLock
 	{
 	public:
@@ -66,17 +81,13 @@ namespace ThreadSchedule
 		}
 	};
 
-	constexpr UINT g_threadCount = 12;
+	
 	constexpr UINT g_taskRemoveCount = 10;
 	constexpr UINT g_exitCode = 4294967295;
 	constexpr BOOL g_fileFlag = FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED;
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
 	constexpr SimulationType g_simType = SIM_ROLE_SPECIFIED_THREAD;
-	
-	constexpr UINT g_threadRoleCount[4] = { 0, 0, 0, 12 };
-	constexpr UINT g_readCallLimit = 1024u;
-	constexpr UINT g_computeLimit = 1024u;
 
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
@@ -89,7 +100,7 @@ namespace ThreadSchedule
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
 
-	std::pair<double, UINT64> StartThreadTasks(const UINT* rootFIDAry, UINT rootFIDAryCount);
+	TestResult StartThreadTasks(TestArgument args);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
