@@ -46,6 +46,7 @@ namespace ThreadSchedule
 		UINT* fidAry;
 		UINT fileCount;
 		UINT threadCount;
+		UINT* threadRole;
 		UINT readCallLimit;
 		UINT computeLimit;
 	};

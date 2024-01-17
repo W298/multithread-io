@@ -5,12 +5,10 @@
 	const UINT fid = static_cast<UINT>(key); \
 	if (fid == g_exitCode) break; \
 	if (fid >= g_fileCount) ExitProcess(-5); \
-	SPAN_START(type, type == THREAD_TASK_READ_CALL ? _T("Read Call Task (FID %d)") : _T("Compute Task (FID %d)"), fid); \
 	if (type == THREAD_TASK_READ_CALL) \
 		ReadCallTaskWork(fid); \
 	else \
 		ComputeTaskWork(fid); \
-	SPAN_END;
 
 #define WAIT_AND_DO_TASK(pRet, pKey, pLpov, type) \
 	GetQueuedCompletionStatus(type == THREAD_TASK_READ_CALL ? g_globalTaskQueue : g_globalWaitingQueue, pRet, pKey, pLpov, INFINITE); \
@@ -22,7 +20,7 @@ using namespace ThreadSchedule;
 UINT g_fileCount;
 UINT64 g_totalFileSize;
 UINT g_threadCount;
-UINT g_threadRoleCount[4] = { 0, 0, 0, 0 };
+UINT* g_threadRoleCount;
 UINT g_readCallLimit;
 UINT g_computeLimit;
 
@@ -56,10 +54,10 @@ std::set<UINT> g_fileFinishSet;
 
 void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 {
-	// SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Read Call Task").c_str());
-	// SPAN_INIT;
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Read Call Task").c_str());
+	SPAN_INIT;
 
-	// SPAN_START(0, _T("Create File"));
+	SPAN_START(0, _T("Read Call Task (FID %d)"), fid);
 	const HANDLE fileHandle = 
 		CreateFileW(
 			(L"dummy\\" + std::to_wstring(fid)).c_str(), 
@@ -136,7 +134,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 	OVERLAPPED ov = { 0 };
 	if (ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, &ov) == FALSE && GetLastError() != ERROR_IO_PENDING)
 		ExitProcess(-1);
-	// SPAN_END;
+	SPAN_END;
 }
 
 void ThreadSchedule::CompletionTaskWork(const UINT fid)
@@ -164,10 +162,10 @@ void ThreadSchedule::CompletionTaskWork(const UINT fid)
 
 void ThreadSchedule::ComputeTaskWork(const UINT fid)
 {
-	// SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Compute Task").c_str());
-	// SPAN_INIT;
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Compute Task").c_str());
+	SPAN_INIT;
 
-	// SPAN_START(2, _T("Ready Paramters"));
+	SPAN_START(2, _T("Compute Task (FID %d)"), fid);
 	LARGE_INTEGER freq, start, end;
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&start);
@@ -220,14 +218,18 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	}
 	
 FINALIZE:
-	// SPAN_END;
+	SPAN_END;
 	VirtualFree(bufferAddress, 0, MEM_RELEASE);
 	
+	AcquireSRWLockShared(&g_srwFileIocp);
 	if (g_fileIocpMap.contains(fid))
 		CloseHandle(g_fileIocpMap[fid]);
-	
+	ReleaseSRWLockShared(&g_srwFileIocp);
+
+	AcquireSRWLockShared(&g_srwFileHandle);
 	if (g_fileHandleMap.contains(fid))
 		CloseHandle(g_fileHandleMap[fid]);
+	ReleaseSRWLockShared(&g_srwFileHandle);
 
 	AcquireSRWLockExclusive(&g_srwFileFinish);
 	g_fileFinishSet.insert(fid);
@@ -428,7 +430,7 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 						g_currentReadCallCount++;
 						if (g_currentReadCallCount == g_readCallLimit)
 						{
-							series.write_alert(L"Start computing!");
+							series.write_alert(L"Last Read Call Task!");
 							g_currentTaskMode = TRUE;
 							g_currentReadCallCount = 0;
 						}
@@ -530,7 +532,7 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 
 	g_fileCount = args.fileCount;
 	g_threadCount = args.threadCount;
-	g_threadRoleCount[3] = args.threadCount;
+	g_threadRoleCount = args.threadRole;
 	g_readCallLimit = args.readCallLimit;
 	g_computeLimit = args.computeLimit;
 

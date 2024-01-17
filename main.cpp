@@ -9,35 +9,37 @@ int main()
 {
 	FileSizeArgs fileSize =
 	{
-		(UINT64)512,								// MinByte
-		(UINT64)512 * 1024 * 1024,					// MaxByte
-		(UINT64)512 * 1024 * 1024,					// Mean
-		(UINT64)1 * 1024 * 1024						// Variance
+		1024,								// MinByte
+		1 * 1024 * 1024,					// MaxByte
+		4 * 1024,							// Mean
+		1 * 1024 * 1024						// Variance
 	};
-	FileComputeArgs fileCompute = 
+	FileComputeArgs fileCompute =
 	{
 		50u,								// MinMicroSeconds
 		5000u,								// MaxMicroSeconds
 		400u,								// Mean
 		400u								// Variance
 	};
-	FileGenerationArgs fArgs = 
+	FileGenerationArgs fArgs =
 	{
-		40u,								// TotalFileCount
+		10000u,								// TotalFileCount
 		fileSize,							// FileSize
-		IDENTICAL,
+		EXP,
 		fileCompute,						// FileCompute
 	};
 
 	// GenerateDummyFiles(fArgs);
 
-	constexpr UINT testFileCount = 40;
+	constexpr UINT testFileCount = 10000;
 
 	UINT rootFIDAry[testFileCount];
 	for (int i = 0; i < testFileCount; i++)
 		rootFIDAry[i] = i;
 	
-	TestArgument args = { rootFIDAry, testFileCount, 4, 40, 40 };
+	UINT threadRole[4] = { 0, 12, 0, 12 };
+	// UINT threadRole[4] = { 0, 0, 0, 24 };
+	TestArgument args = { rootFIDAry, testFileCount, 24, threadRole, 10000, 10000 };
 	TestResult res = StartThreadTasks(args);
 
 	printf("\
