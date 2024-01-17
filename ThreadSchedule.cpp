@@ -428,6 +428,7 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 						g_currentReadCallCount++;
 						if (g_currentReadCallCount == g_readCallLimit)
 						{
+							series.write_alert(L"Start computing!");
 							g_currentTaskMode = TRUE;
 							g_currentReadCallCount = 0;
 						}
@@ -689,7 +690,10 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	delete[] g_threadHandleAry;
 	delete[] g_threadIocpAry;
 
-	return { el * 1000, g_totalFileSize };
+	PROCESS_MEMORY_COUNTERS memCounter;
+	BOOL result = GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
+
+	return { el * 1000, g_totalFileSize, memCounter.PeakPagefileUsage };
 }
 
 DWORD ThreadSchedule::GetAlignedByteSize(const PLARGE_INTEGER fileByteSize, const DWORD sectorSize)

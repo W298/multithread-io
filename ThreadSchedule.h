@@ -54,6 +54,7 @@ namespace ThreadSchedule
 	{
 		double elapsedMiliseconds;
 		UINT64 totalFileSize;
+		SIZE_T peakMem;
 	};
 
 	class FileLock

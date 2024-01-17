@@ -9,10 +9,10 @@ int main()
 {
 	FileSizeArgs fileSize =
 	{
-		512u,								// MinByte
-		10485760u,							// MaxByte
-		1048576u,							// Mean
-		1048576u							// Variance
+		(UINT64)512,								// MinByte
+		(UINT64)512 * 1024 * 1024,					// MaxByte
+		(UINT64)512 * 1024 * 1024,					// Mean
+		(UINT64)1 * 1024 * 1024						// Variance
 	};
 	FileComputeArgs fileCompute = 
 	{
@@ -21,40 +21,29 @@ int main()
 		400u,								// Mean
 		400u								// Variance
 	};
-	FileDependencyArgs fileDep = 
-	{
-		FILE_DEPENDENCY_PYRAMID,			// Model
-		5u,									// TreeDepth
-		FALSE								// ForceAllDep
-	};
 	FileGenerationArgs fArgs = 
 	{
-		10000u,								// TotalFileCount
+		40u,								// TotalFileCount
 		fileSize,							// FileSize
+		IDENTICAL,
 		fileCompute,						// FileCompute
-		fileDep								// FileDep
 	};
 
 	// GenerateDummyFiles(fArgs);
 
-	constexpr UINT testFileCount = 10000;
+	constexpr UINT testFileCount = 40;
 
 	UINT rootFIDAry[testFileCount];
 	for (int i = 0; i < testFileCount; i++)
 		rootFIDAry[i] = i;
 	
-	TestArgument args = { rootFIDAry, testFileCount, 8, 40, 40 };
-
-	UINT64 totalFileSize = 0;
-	double resultAry;
-
+	TestArgument args = { rootFIDAry, testFileCount, 4, 40, 40 };
 	TestResult res = StartThreadTasks(args);
-	resultAry = res.elapsedMiliseconds;
-	totalFileSize = res.totalFileSize;
 
 	printf("\
+File distribution: %s\n\
 File size: %d ~ %d, Mean(%d), Variance(%d)\n\
-File compute time: %d ~ %d, Mean(%d), Variance(%d)\n\
+File compute time: %f ms ~ %f ms, Mean(%f ms), Variance(%f ms)\n\
 Total file size: %f MiB\n\n\
 \
 Thread count: %d\n\
@@ -62,22 +51,26 @@ Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)
 Read Call Task Split(%d) / Compute Task Split(%d)\n\
 \
 Test file count: %d\n\
+Peak commited Memory: %f MiB\n\
 Elapsed time: %f ms\n\n\n\n\n\n",
+	"EXP",
 	fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-	fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
-	totalFileSize / (1024.0 * 1024.0),
+	fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
+	res.totalFileSize / (1024.0 * 1024.0),
 	args.threadCount,
 	0, 0, 0, args.threadCount,
 	args.readCallLimit, args.computeLimit,
 	testFileCount,
-	resultAry);
+	res.peakMem / (1024.0 * 1024.0),
+	res.elapsedMiliseconds);
 
 	FILE* log;
 	fopen_s(&log, "log.txt", "w");
 
 	fprintf(log, "\
+File distribution: %s\n\
 File size: %d ~ %d, Mean(%d), Variance(%d)\n\
-File compute time: %d ~ %d, Mean(%d), Variance(%d)\n\
+File compute time: %f ms ~ %f ms, Mean(%f ms), Variance(%f ms)\n\
 Total file size: %f MiB\n\n\
 \
 Thread count: %d\n\
@@ -85,15 +78,18 @@ Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)
 Read Call Task Split(%d) / Compute Task Split(%d)\n\
 \
 Test file count: %d\n\
+Peak commited Memory: %f MiB\n\
 Elapsed time: %f ms\n\n\n\n\n\n",
+	"EXP",
 	fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-	fileCompute.MinMicroSeconds, fileCompute.MaxMicroSeconds, fileCompute.Mean, fileCompute.Variance,
-	totalFileSize / (1024.0 * 1024.0),
+	fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
+	res.totalFileSize / (1024.0 * 1024.0),
 	args.threadCount,
 	0, 0, 0, args.threadCount,
 	args.readCallLimit, args.computeLimit,
 	testFileCount,
-	resultAry);
+	res.peakMem / (1024.0 * 1024.0),
+	res.elapsedMiliseconds);
 
 	fclose(log);
 

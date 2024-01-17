@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <set>
+#include <Psapi.h>
 
 #include "cvmarkersobj.h"
 

@@ -2,19 +2,19 @@
 
 namespace FileGenerator
 {
-	enum FileDependencyModel
+	enum FileSizeModelType
 	{
-		FILE_DEPENDENCY_PYRAMID,
-		FILE_DEPENDENCY_REVERSE_PYRAMID,
-		FILE_DEPENDENCY_UNIFORM
+		IDENTICAL,
+		NORMAL_DIST,
+		EXP
 	};
 
 	struct FileSizeArgs
 	{
 		UINT64 MinByte;
 		UINT64 MaxByte;
-		UINT Mean;
-		UINT Variance;
+		UINT64 Mean;
+		UINT64 Variance;
 	};
 
 	struct FileComputeArgs
@@ -24,20 +24,13 @@ namespace FileGenerator
 		UINT Mean;
 		UINT Variance;
 	};
-
-	struct FileDependencyArgs
-	{
-		FileDependencyModel Model;
-		UINT TreeDepth;
-		BOOL ForceAllDep;
-	};
 	
 	struct FileGenerationArgs
 	{
 		UINT64 TotalFileCount;
 		FileSizeArgs FileSize;
+		FileSizeModelType FileSizeModel;
 		FileComputeArgs FileCompute;
-		FileDependencyArgs FileDep;
 	};
 
 	void GenerateDummyFiles(FileGenerationArgs fileGenerationArgs);
