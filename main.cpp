@@ -2,6 +2,8 @@
 #include "FileGenerator.h"
 #include "ThreadSchedule.h"
 
+#define MMAP
+
 using namespace FileGenerator;
 using namespace ThreadSchedule;
 
@@ -9,10 +11,10 @@ int main()
 {
 	FileSizeArgs fileSize =
 	{
-		1024,								// MinByte
-		1 * 1024 * 1024,					// MaxByte
-		4 * 1024,							// Mean
-		1 * 1024 * 1024						// Variance
+		(UINT64)1 * 1024,								// MinByte
+		(UINT64)1 * 1024 * 1024,						// MaxByte
+		(UINT64)4 * 1024,								// Mean
+		(UINT64)1 * 1024 * 1024							// Variance
 	};
 	FileComputeArgs fileCompute =
 	{
@@ -23,7 +25,7 @@ int main()
 	};
 	FileGenerationArgs fArgs =
 	{
-		10000u,								// TotalFileCount
+		1000000,							// TotalFileCount
 		fileSize,							// FileSize
 		EXP,
 		fileCompute,						// FileCompute
@@ -31,16 +33,21 @@ int main()
 
 	// GenerateDummyFiles(fArgs);
 
-	constexpr UINT testFileCount = 10000;
+	constexpr UINT testFileCount = 1000000;
 
-	UINT rootFIDAry[testFileCount];
-	for (int i = 0; i < testFileCount; i++)
-		rootFIDAry[i] = i;
-	
+#ifdef MMAP
+	UINT threadRole[4] = { 0, 0, 0, 0 };
+	TestArgument args = { testFileCount, 24, threadRole, testFileCount, testFileCount, TRUE };
+	TestResult res = StartThreadTasksFileMap(args);
+#else
 	UINT threadRole[4] = { 0, 12, 0, 12 };
-	// UINT threadRole[4] = { 0, 0, 0, 24 };
-	TestArgument args = { rootFIDAry, testFileCount, 24, threadRole, 10000, 10000 };
+	UINT totalThreadCount = 0;
+	for (UINT i = 0; i < 4; i++)
+		totalThreadCount += threadRole[i];
+
+	TestArgument args = { testFileCount, totalThreadCount, threadRole, testFileCount, testFileCount, FALSE };
 	TestResult res = StartThreadTasks(args);
+#endif
 
 	printf("\
 File distribution: %s\n\
@@ -60,7 +67,7 @@ Elapsed time: %f ms\n\n\n\n\n\n",
 	fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
 	res.totalFileSize / (1024.0 * 1024.0),
 	args.threadCount,
-	0, 0, 0, args.threadCount,
+	args.threadRole[0], args.threadRole[1], args.threadRole[2], args.threadRole[3],
 	args.readCallLimit, args.computeLimit,
 	testFileCount,
 	res.peakMem / (1024.0 * 1024.0),
@@ -87,7 +94,7 @@ Elapsed time: %f ms\n\n\n\n\n\n",
 	fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
 	res.totalFileSize / (1024.0 * 1024.0),
 	args.threadCount,
-	0, 0, 0, args.threadCount,
+	args.threadRole[0], args.threadRole[1], args.threadRole[2], args.threadRole[3],
 	args.readCallLimit, args.computeLimit,
 	testFileCount,
 	res.peakMem / (1024.0 * 1024.0),

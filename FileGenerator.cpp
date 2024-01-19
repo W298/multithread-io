@@ -13,7 +13,6 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 	CreateDirectoryW(L"dummy", NULL);
 	const LPCTSTR path = L"dummy\\";
 
-	HANDLE* handleAry = new HANDLE[args.TotalFileCount];
 	BYTE* buffer = static_cast<BYTE*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, args.FileSize.MaxByte));
 
 	std::random_device rd;
@@ -24,6 +23,9 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 
 	for (UINT fid = 0; fid < args.TotalFileCount; fid++)
 	{
+		if (fid % 1000 == 0)
+			std::cout << fid << "\n";
+
 		// File creation.
 		UINT64 fileByteSize = args.FileSize.MinByte;
 		switch (args.FileSizeModel)
@@ -42,29 +44,25 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 		const UINT fileComputeTime =
 			max(args.FileCompute.MinMicroSeconds, min(args.FileCompute.MaxMicroSeconds, round(abs(computeNormalDist(generator)))));
 
-		handleAry[fid] =
-			CreateFileW(
-				(path + std::to_wstring(fid)).c_str(),
-				GENERIC_WRITE,
-				0,
-				NULL,
-				CREATE_ALWAYS,
-				FILE_FLAG_WRITE_THROUGH,
-				NULL);
+		const HANDLE handle = CreateFileW(
+			(path + std::to_wstring(fid)).c_str(),
+			GENERIC_WRITE,
+			0,
+			NULL,
+			CREATE_ALWAYS,
+			FILE_FLAG_WRITE_THROUGH,
+			NULL);
 
 		// Write compute time to file.
 		memcpy(buffer, &fileComputeTime, sizeof(UINT));
-		WriteFile(handleAry[fid], buffer, fileByteSize, NULL, NULL);
+		WriteFile(handle, buffer, fileByteSize, NULL, NULL);
 		
 		ZeroMemory(buffer, sizeof(UINT));
-	}
 
-	// Release memory.
-	for (UINT64 fid = 0; fid < args.TotalFileCount; fid++)
-		CloseHandle(handleAry[fid]);
+		CloseHandle(handle);
+	}	
 	
 	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
-	delete[] handleAry;
 
 	SPAN_END;
 }

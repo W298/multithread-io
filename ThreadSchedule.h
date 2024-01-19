@@ -43,12 +43,12 @@ namespace ThreadSchedule
 
 	struct TestArgument
 	{
-		UINT* fidAry;
 		UINT fileCount;
 		UINT threadCount;
 		UINT* threadRole;
 		UINT readCallLimit;
 		UINT computeLimit;
+		BOOL enableComputeTime;
 	};
 
 	struct TestResult
@@ -90,7 +90,9 @@ namespace ThreadSchedule
 
 	constexpr BOOL g_waitDependencyFront = TRUE;
 	constexpr SimulationType g_simType = SIM_ROLE_SPECIFIED_THREAD;
+	constexpr UINT g_computeLoopCount = 1;
 
+	void FileMapTaskWork(UINT fid);
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
 	void ComputeTaskWork(UINT fid);
@@ -101,8 +103,10 @@ namespace ThreadSchedule
 
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
+	DWORD WINAPI FileMapThreadFunc(LPVOID param);
 
 	TestResult StartThreadTasks(TestArgument args);
+	TestResult StartThreadTasksFileMap(TestArgument args);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);
