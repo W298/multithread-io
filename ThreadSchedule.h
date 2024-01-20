@@ -92,10 +92,11 @@ namespace ThreadSchedule
 	constexpr SimulationType g_simType = SIM_ROLE_SPECIFIED_THREAD;
 	constexpr UINT g_computeLoopCount = 1;
 
-	void FileMapTaskWork(UINT fid);
 	void ReadCallTaskWork(UINT fid);
 	void CompletionTaskWork(UINT fid);
 	void ComputeTaskWork(UINT fid);
+	void FileMapTaskWork(UINT fid);
+	void SyncTaskWork(UINT fid);
 
 	DWORD HandleLockAcquireFailure(const UINT fid, const UINT threadTaskType);
 	
@@ -104,9 +105,11 @@ namespace ThreadSchedule
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
 	DWORD WINAPI FileMapThreadFunc(LPVOID param);
+	DWORD WINAPI SyncThreadFunc(LPVOID param);
 
 	TestResult StartThreadTasks(TestArgument args);
 	TestResult StartThreadTasksFileMap(TestArgument args);
+	TestResult StartSyncThreadTasks(TestArgument args);
 
 	DWORD GetAlignedByteSize(PLARGE_INTEGER fileByteSize, DWORD sectorSize);
 	void PostThreadTask(UINT t, UINT fid, UINT threadTaskType);

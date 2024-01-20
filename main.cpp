@@ -4,6 +4,7 @@
 
 // #define FILE_GEN
 // #define MMAP
+// #define SYNC
 
 using namespace FileGenerator;
 using namespace ThreadSchedule;
@@ -36,80 +37,76 @@ int main()
 	GenerateDummyFiles(fArgs);
 #else
 
-	constexpr UINT testFileCount = 10000;
+	constexpr UINT testCount = 50;
+	constexpr UINT testFileCount = 100;
 
+	UINT64 totalFileSize = 0;
+	double mean = 0;
+
+	for (UINT t = 0; t < testCount; t++)
+	{
 #ifdef MMAP
-
-	UINT threadRole[4] = { 0, 0, 0, 0 };
-	TestArgument args = { testFileCount, 24, threadRole, testFileCount, testFileCount, TRUE };
-	TestResult res = StartThreadTasksFileMap(args);
-
-#else
-
-	UINT threadRole[4] = { 0, 12, 0, 12 };
-	UINT totalThreadCount = 0;
-	for (UINT i = 0; i < 4; i++)
-		totalThreadCount += threadRole[i];
-
-	TestArgument args = { testFileCount, totalThreadCount, threadRole, testFileCount, testFileCount, FALSE };
-	TestResult res = StartThreadTasks(args);
-
+		TestArgument args = { testFileCount, 24, NULL, testFileCount, testFileCount, TRUE };
+		TestResult res = StartThreadTasksFileMap(args);
 #endif
 
-	printf("\
-File distribution: %s\n\
-File size: %d ~ %d, Mean(%d), Variance(%d)\n\
-File compute time: %f ms ~ %f ms, Mean(%f ms), Variance(%f ms)\n\
-Total file size: %f MiB\n\n\
-\
+#ifdef SYNC
+		TestArgument args = { testFileCount, 5, NULL, testFileCount, testFileCount, TRUE };
+		TestResult res = StartSyncThreadTasks(args);
+#endif
+
+#ifndef MMAP
+#ifndef SYNC
+		UINT threadRole[4] = { 1, 4, 0, 0 };
+		UINT totalThreadCount = 0;
+		for (UINT i = 0; i < 4; i++)
+			totalThreadCount += threadRole[i];
+
+		TestArgument args = { testFileCount, totalThreadCount, threadRole, testFileCount, testFileCount, TRUE };
+		TestResult res = StartThreadTasks(args);
+#endif
+#endif
+
+		totalFileSize = res.totalFileSize;
+		mean += res.elapsedMS;
+
+		printf("\
 Thread count: %d\n\
-Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n\
-Read Call Task Split(%d) / Compute Task Split(%d)\n\
-\
-Test file count: %d\n\
+Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\
 Peak commited Memory: %f MiB\n\
-Elapsed time: %f ms\n\n\n\n\n\n",
-"EXP",
-fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
-res.totalFileSize / (1024.0 * 1024.0),
+Elapsed time: %f ms\n\n",
 args.threadCount,
-args.threadRole[0], args.threadRole[1], args.threadRole[2], args.threadRole[3],
-args.readCallLimit, args.computeLimit,
-testFileCount,
+args.threadRole == NULL ? 0 : args.threadRole[0],
+args.threadRole == NULL ? 0 : args.threadRole[1],
+args.threadRole == NULL ? 0 : args.threadRole[2],
+args.threadRole == NULL ? 0 : args.threadRole[3],
 res.peakMem / (1024.0 * 1024.0),
 res.elapsedMS);
 
-	FILE* log;
-	fopen_s(&log, "log.txt", "w");
-
-	fprintf(log, "\
-File distribution: %s\n\
-File size: %d ~ %d, Mean(%d), Variance(%d)\n\
-File compute time: %f ms ~ %f ms, Mean(%f ms), Variance(%f ms)\n\
-Total file size: %f MiB\n\n\
-\
-Thread count: %d\n\
-Read Thread(%d) / Compute Thread(%d) / Compute-Read Thread(%d) / Both Thread(%d)\n\n\
-Read Call Task Split(%d) / Compute Task Split(%d)\n\
-\
-Test file count: %d\n\
-Peak commited Memory: %f MiB\n\
-Elapsed time: %f ms\n\n\n\n\n\n",
-"EXP",
-fileSize.MinByte, fileSize.MaxByte, fileSize.Mean, fileSize.Variance,
-fileCompute.MinMicroSeconds / 1024.0, fileCompute.MaxMicroSeconds / 1024.0, fileCompute.Mean / 1024.0, fileCompute.Variance / 1024.0,
-res.totalFileSize / (1024.0 * 1024.0),
-args.threadCount,
-args.threadRole[0], args.threadRole[1], args.threadRole[2], args.threadRole[3],
-args.readCallLimit, args.computeLimit,
-testFileCount,
-res.peakMem / (1024.0 * 1024.0),
-res.elapsedMS);
-
-	fclose(log);
-
 #endif
+	}
+
+	printf("\n\n\n\n\
+File distribution: %s\n\
+File size: %f KiB ~ %f KiB, Mean(%f KiB), Variance(%f KiB)\n\
+File compute time: %f ms ~ %f ms, Mean(%f ms), Variance(%f ms)\n\
+Test file count: %d\n\
+Total file size: %f MiB\n\n",
+fArgs.FileSizeModel == 0 ? "IDENTICAL" : fArgs.FileSizeModel == 1 ? "NORMAL_DIST" : "EXP",
+fileSize.MinByte / 1024.0,
+fileSize.MaxByte / 1024.0,
+fileSize.Mean / 1024.0,
+fileSize.Variance / 1024.0,
+fileCompute.MinMicroSeconds / 1024.0,
+fileCompute.MaxMicroSeconds / 1024.0,
+fileCompute.Mean / 1024.0,
+fileCompute.Variance / 1024.0,
+testFileCount,
+totalFileSize / (1024.0 * 1024.0)
+);
+
+	mean /= testCount;
+	printf("%d Tested. Mean Elapsed time: %f ms\n\n\n\n", testCount, mean);
 
 	return 0;
 }

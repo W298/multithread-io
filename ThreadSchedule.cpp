@@ -50,121 +50,12 @@ std::unordered_map<UINT, HANDLE> g_fileIocpMap;
 std::unordered_map<UINT, BYTE*> g_fileBufferMap;
 std::unordered_map<UINT, UINT> g_fileBufferSizeMap;
 
-void ThreadSchedule::FileMapTaskWork(UINT fid)
-{
-#ifdef _DEBUG
-	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" FileMap Task").c_str());
-	SPAN_INIT;
-	SPAN_START(0, _T("Create File"), fid);
-#endif
-
-	const HANDLE fileHandle =
-		CreateFileW(
-			(L"dummy\\" + std::to_wstring(fid)).c_str(),
-			GENERIC_READ,
-			0,
-			NULL,
-			OPEN_EXISTING,
-			FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED,
-			NULL);
-
-	if (fileHandle == INVALID_HANDLE_VALUE)
-		ExitProcess(9);
-
-#ifdef _DEBUG
-	SPAN_END;
-#endif
-
-	LARGE_INTEGER fileByteSize;
-	GetFileSizeEx(fileHandle, &fileByteSize);
-
-#ifdef _DEBUG
-	SPAN_START(0, _T("Create File Mapping"), fid);
-#endif
-
-	const HANDLE mapHandle =
-		CreateFileMapping(
-			fileHandle,
-			NULL,
-			PAGE_READONLY,
-			0,
-			0,
-			NULL);
-
-	if (mapHandle == 0)
-		ExitProcess(9);
-
-#ifdef _DEBUG
-	SPAN_END;
-	SPAN_START(0, _T("Map View Of File"), fid);
-#endif
-
-	const LPVOID mapView =
-		MapViewOfFile(
-			mapHandle,
-			FILE_MAP_READ,
-			0,
-			0,
-			0
-		);
-
-	if (mapView == NULL)
-		ExitProcess(9);
-
-#ifdef _DEBUG
-	SPAN_END;
-	SPAN_START(0, _T("Checksum"), fid);
-#endif
-
-	BYTE* ptr = (BYTE*)mapView;
-
-	// Calculate checksum.
-	for (int x = 0; x < g_computeLoopCount; x++)
-	{
-		int checkSum = 0;
-		int sum = 0;
-
-		for (int i = 0; i < fileByteSize.QuadPart; i++)
-		{
-			sum += ptr[i];
-		}
-
-		checkSum = sum;
-		checkSum = checkSum & 0xFF;
-		checkSum = ~checkSum + 1;
-
-		int res = checkSum + sum;
-		res = res & 0xFF;
-	}
-
-#ifdef _DEBUG
-	SPAN_END;
-#endif
-
-	UnmapViewOfFile(mapView);
-	SAFE_CLOSE_HANDLE(mapHandle);
-	SAFE_CLOSE_HANDLE(fileHandle);
-
-	AcquireSRWLockExclusive(&g_srwFileFinish);
-	g_completeFileCount++;
-	if (g_completeFileCount == g_testArgs.fileCount)
-	{
-		std::cout << "Finished" << "\n";
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
-		{
-			OVERLAPPED ov = { 0 };
-			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
-		}
-	}
-	ReleaseSRWLockExclusive(&g_srwFileFinish);
-}
-
 void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 {
 #ifdef _DEBUG
 	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Read Call Task").c_str());
 	SPAN_INIT;
-	SPAN_START(0, _T("Create File"), fid);
+	SPAN_START(0, _T("Create File (%d)", fid), fid);
 #endif
 
 	const HANDLE fileHandle = 
@@ -179,7 +70,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("Get File Size"));
+	SPAN_START(0, _T("Get File Size (%d)"), fid);
 #endif
 
 	LARGE_INTEGER fileByteSize;
@@ -189,7 +80,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("Create IOCP Handle"));
+	SPAN_START(0, _T("Create IOCP Handle (%d)"), fid);
 #endif
 
 	HANDLE fileIOCP = NULL;
@@ -205,14 +96,14 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("Buffer Allocation"));
+	SPAN_START(0, _T("Buffer Allocation (%d)"), fid);
 #endif
 
 	BYTE* fileBuffer = static_cast<BYTE*>(VirtualAlloc(NULL, alignedFileByteSize, MEM_COMMIT, PAGE_READWRITE));
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("Write to Map"));
+	SPAN_START(0, _T("Write to Map (%d)"), fid);
 #endif
 
 	AcquireSRWLockExclusive(&g_srwFileHandle);
@@ -246,7 +137,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("ReadFile Call"));
+	SPAN_START(0, _T("ReadFile Call (%d)"), fid);
 #endif
 
 	OVERLAPPED ov = { 0 };
@@ -263,7 +154,7 @@ void ThreadSchedule::CompletionTaskWork(const UINT fid)
 #ifdef _DEBUG
 	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Completion Task").c_str());
 	SPAN_INIT;
-	SPAN_START(1, _T("Completion Task (FID %d)"), fid);
+	SPAN_START(1, _T("Completion (%d)"), fid);
 #endif
 
 	HANDLE fileIocp = NULL;
@@ -289,8 +180,11 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 #ifdef _DEBUG
 	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Compute Task").c_str());
 	SPAN_INIT;
-	SPAN_START(2, _T("Compute Task (FID %d)"), fid);
+	SPAN_START(2, _T("Compute (%d)"), fid);
 #endif
+
+	TIMER_INIT;
+	TIMER_START;
 
 	BYTE* bufferAddress = nullptr;
 	UINT bufferSize = 0;
@@ -303,16 +197,12 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 
 	if (g_testArgs.enableComputeTime)
 	{
-		LARGE_INTEGER freq, start, end;
-		QueryPerformanceFrequency(&freq);
-		QueryPerformanceCounter(&start);
-
 		UINT timeOverMicroSeconds;
-		memcpy(&timeOverMicroSeconds, bufferAddress, sizeof(UINT));
-
-		float elapsedMicroSeconds = 0.0f;
 		BOOL exit = FALSE;
-		while (elapsedMicroSeconds <= timeOverMicroSeconds)
+		memcpy(&timeOverMicroSeconds, bufferAddress, sizeof(UINT));
+		
+		TIMER_STOP;
+		while (el * 1000 * 1000 <= timeOverMicroSeconds)
 		{
 			// Calculate checksum.
 			{
@@ -323,11 +213,8 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 				{
 					sum += bufferAddress[i];
 
-					QueryPerformanceCounter(&end);
-					elapsedMicroSeconds = (
-						static_cast<float>(end.QuadPart - start.QuadPart) /
-						static_cast<float>(freq.QuadPart)) * 1000.0f * 1000.0f;
-					if (elapsedMicroSeconds > timeOverMicroSeconds)
+					TIMER_STOP;
+					if (el * 1000 * 1000 > timeOverMicroSeconds)
 					{
 						exit = TRUE;
 						break;
@@ -370,6 +257,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
+	SPAN_START(2, _T("Release (%d)"), fid);
 #endif
 
 	if (bufferAddress != nullptr)
@@ -398,6 +286,250 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 			OVERLAPPED ov = { 0 };
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
 			PostQueuedCompletionStatus(g_globalWaitingQueue, 0, g_exitCode, &ov);
+		}
+	}
+	ReleaseSRWLockExclusive(&g_srwFileFinish);
+
+#ifdef _DEBUG
+	SPAN_END;
+#endif
+}
+
+void ThreadSchedule::FileMapTaskWork(UINT fid)
+{
+#ifdef _DEBUG
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" FileMap").c_str());
+	SPAN_INIT;
+	SPAN_START(0, _T("Create File (%d)"), fid);
+#endif
+
+	const HANDLE fileHandle =
+		CreateFileW(
+			(L"dummy\\" + std::to_wstring(fid)).c_str(),
+			GENERIC_READ,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED,
+			NULL);
+
+	if (fileHandle == INVALID_HANDLE_VALUE)
+		ExitProcess(9);
+
+#ifdef _DEBUG
+	SPAN_END;
+#endif
+
+	LARGE_INTEGER fileByteSize;
+	GetFileSizeEx(fileHandle, &fileByteSize);
+
+#ifdef _DEBUG
+	SPAN_START(0, _T("CreateFileMapping (%d)"), fid);
+#endif
+
+	const HANDLE mapHandle =
+		CreateFileMapping(
+			fileHandle,
+			NULL,
+			PAGE_READONLY,
+			0,
+			0,
+			NULL);
+
+	if (mapHandle == 0)
+		ExitProcess(9);
+
+#ifdef _DEBUG
+	SPAN_END;
+	SPAN_START(0, _T("MapViewOfFile (%d)"), fid);
+#endif
+
+	const LPVOID mapView =
+		MapViewOfFile(
+			mapHandle,
+			FILE_MAP_READ,
+			0,
+			0,
+			0
+		);
+
+	if (mapView == NULL)
+		ExitProcess(9);
+
+#ifdef _DEBUG
+	SPAN_END;
+	SPAN_START(2, _T("Compute (%d)"), fid);
+#endif
+
+	BYTE* ptr = (BYTE*)mapView;
+
+	// Calculate checksum.
+	for (int x = 0; x < g_computeLoopCount; x++)
+	{
+		int checkSum = 0;
+		int sum = 0;
+
+		for (int i = 0; i < fileByteSize.QuadPart; i++)
+		{
+			sum += ptr[i];
+		}
+
+		checkSum = sum;
+		checkSum = checkSum & 0xFF;
+		checkSum = ~checkSum + 1;
+
+		int res = checkSum + sum;
+		res = res & 0xFF;
+	}
+
+#ifdef _DEBUG
+	SPAN_END;
+#endif
+
+	UnmapViewOfFile(mapView);
+	SAFE_CLOSE_HANDLE(mapHandle);
+	SAFE_CLOSE_HANDLE(fileHandle);
+
+	AcquireSRWLockExclusive(&g_srwFileFinish);
+	g_completeFileCount++;
+	g_testResult.totalFileSize += fileByteSize.QuadPart;
+	if (g_completeFileCount == g_testArgs.fileCount)
+	{
+		std::cout << "Finished" << "\n";
+		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		{
+			OVERLAPPED ov = { 0 };
+			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
+		}
+	}
+	ReleaseSRWLockExclusive(&g_srwFileFinish);
+}
+
+void ThreadSchedule::SyncTaskWork(UINT fid)
+{
+#ifdef _DEBUG
+	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" Sync").c_str());
+	SPAN_INIT;
+	SPAN_START(0, _T("Create File (%d)"), fid);
+#endif
+
+	const HANDLE fileHandle =
+		CreateFileW(
+			(L"dummy\\" + std::to_wstring(fid)).c_str(),
+			GENERIC_READ,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			FILE_FLAG_NO_BUFFERING,
+			NULL);
+
+	if (fileHandle == INVALID_HANDLE_VALUE)
+		ExitProcess(9);
+
+#ifdef _DEBUG
+	SPAN_END;
+	SPAN_START(0, _T("Buffer Allocation (%d)"), fid);
+#endif
+
+	LARGE_INTEGER fileByteSize;
+	GetFileSizeEx(fileHandle, &fileByteSize);
+	const DWORD alignedFileByteSize = GetAlignedByteSize(&fileByteSize, 512u);
+
+	BYTE* fileBuffer = static_cast<BYTE*>(VirtualAlloc(NULL, alignedFileByteSize, MEM_COMMIT, PAGE_READWRITE));
+
+#ifdef _DEBUG
+	SPAN_END;
+	SPAN_START(0, _T("ReadFile (%d)"), fid);
+#endif
+
+	if (FALSE == ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, NULL) && GetLastError() != ERROR_IO_PENDING)
+		ExitProcess(-1);
+
+#ifdef _DEBUG
+	SPAN_END;
+	SPAN_START(2, _T("Compute (%d)"), fid);
+#endif
+
+	TIMER_INIT;
+	TIMER_START;
+
+	if (g_testArgs.enableComputeTime)
+	{
+		UINT timeOverMicroSeconds;
+		BOOL exit = FALSE;
+		memcpy(&timeOverMicroSeconds, fileBuffer, sizeof(UINT));
+
+		TIMER_STOP;
+		while (el * 1000 * 1000 <= timeOverMicroSeconds)
+		{
+			// Calculate checksum.
+			{
+				int checkSum = 0;
+				int sum = 0;
+
+				for (int i = 0; i < fileByteSize.QuadPart; i++)
+				{
+					sum += fileBuffer[i];
+
+					TIMER_STOP;
+					if (el * 1000 * 1000 > timeOverMicroSeconds)
+					{
+						exit = TRUE;
+						break;
+					}
+				}
+
+				if (exit)
+					break;
+
+				checkSum = sum;
+				checkSum = checkSum & 0xFF;
+				checkSum = ~checkSum + 1;
+
+				int res = checkSum + sum;
+				res = res & 0xFF;
+			}
+		}
+	}
+	else
+	{
+		// Calculate checksum.
+		for (int x = 0; x < g_computeLoopCount; x++)
+		{
+			int checkSum = 0;
+			int sum = 0;
+
+			for (int i = 0; i < fileByteSize.QuadPart; i++)
+			{
+				sum += fileBuffer[i];
+			}
+
+			checkSum = sum;
+			checkSum = checkSum & 0xFF;
+			checkSum = ~checkSum + 1;
+
+			int res = checkSum + sum;
+			res = res & 0xFF;
+		}
+	}
+
+#ifdef _DEBUG
+	SPAN_END;
+#endif
+
+	VirtualFree(fileBuffer, 0, MEM_RELEASE);
+	SAFE_CLOSE_HANDLE(fileHandle);
+
+	AcquireSRWLockExclusive(&g_srwFileFinish);
+	g_completeFileCount++;
+	g_testResult.totalFileSize += fileByteSize.QuadPart;
+	if (g_completeFileCount == g_testArgs.fileCount)
+	{
+		std::cout << "Finished" << "\n";
+		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		{
+			OVERLAPPED ov = { 0 };
+			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
 		}
 	}
 	ReleaseSRWLockExclusive(&g_srwFileFinish);
@@ -691,6 +823,25 @@ DWORD ThreadSchedule::FileMapThreadFunc(const LPVOID param)
 	}
 }
 
+DWORD ThreadSchedule::SyncThreadFunc(LPVOID param)
+{
+	UNREFERENCED_PARAMETER(param);
+
+	DWORD ret;
+	ULONG_PTR key;
+	LPOVERLAPPED lpov;
+
+	while (TRUE)
+	{
+		GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, INFINITE);
+
+		if (key == g_exitCode) break;
+		if (key >= g_testArgs.fileCount) ExitProcess(-5);
+
+		SyncTaskWork(key);
+	}
+}
+
 TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 {
 #ifdef _DEBUG
@@ -698,6 +849,7 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	SPAN_INIT;
 #endif
 
+	g_testResult = { 0 };
 	g_testArgs = args;
 
 	if (g_simType == SIM_UNIVERSAL_THREAD)
@@ -874,6 +1026,11 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	PROCESS_MEMORY_COUNTERS memCounter;
 	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
 
+	g_currentReadCallCount = 0;
+	g_currentComputeCount = 0;
+	g_currentTaskMode = FALSE;
+	g_completeFileCount = 0;
+
 	g_testResult.elapsedMS = el * 1000;
 	g_testResult.peakMem = memCounter.PeakPagefileUsage;
 
@@ -887,6 +1044,7 @@ TestResult ThreadSchedule::StartThreadTasksFileMap(TestArgument args)
 	SPAN_INIT;
 #endif
 
+	g_testResult = { 0 };
 	g_testArgs = args;
 
 	InitializeSRWLock(&g_srwFileFinish);
@@ -907,8 +1065,6 @@ TestResult ThreadSchedule::StartThreadTasksFileMap(TestArgument args)
 
 		g_threadHandleAry[t] = threadHandle;
 	}
-
-	Sleep(1000);
 
 #ifdef _DEBUG
 	SPAN_START(0, _T("Loading Time"));
@@ -934,18 +1090,90 @@ TestResult ThreadSchedule::StartThreadTasksFileMap(TestArgument args)
 	SAFE_CLOSE_HANDLE(g_globalTaskQueue);
 
 	for (UINT t = 0; t < g_testArgs.threadCount; t++)
-	{
-		if (g_simType == SIM_UNIVERSAL_THREAD)
-			SAFE_CLOSE_HANDLE(g_threadIocpAry[t]);
-
 		SAFE_CLOSE_HANDLE(g_threadHandleAry[t]);
-	}
 
 	delete[] g_threadHandleAry;
 	delete[] g_threadIocpAry;
 
 	PROCESS_MEMORY_COUNTERS memCounter;
 	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
+
+	g_currentReadCallCount = 0;
+	g_currentComputeCount = 0;
+	g_currentTaskMode = FALSE;
+	g_completeFileCount = 0;
+
+	g_testResult.elapsedMS = el * 1000;
+	g_testResult.peakMem = memCounter.PeakPagefileUsage;
+
+	return g_testResult;
+}
+
+TestResult ThreadSchedule::StartSyncThreadTasks(TestArgument args)
+{
+#ifdef _DEBUG
+	SERIES_INIT(_T("Main Thread"));
+	SPAN_INIT;
+#endif
+
+	g_testResult = { 0 };
+	g_testArgs = args;
+
+	InitializeSRWLock(&g_srwFileFinish);
+
+	g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.threadCount);
+
+	g_threadHandleAry = new HANDLE[g_testArgs.threadCount];
+	g_threadIocpAry = new HANDLE[g_testArgs.threadCount];
+
+	// Create threads.
+	for (UINT t = 0; t < g_testArgs.threadCount; t++)
+	{
+		DWORD tid = 0;
+		HANDLE threadHandle = CreateThread(NULL, 0, SyncThreadFunc, NULL, 0, &tid);
+
+		if (threadHandle == NULL)
+			ExitProcess(3);
+
+		g_threadHandleAry[t] = threadHandle;
+	}
+
+#ifdef _DEBUG
+	SPAN_START(0, _T("Loading Time"));
+#endif
+
+	TIMER_INIT;
+	TIMER_START;
+
+	for (UINT i = 0; i < args.fileCount; i++)
+	{
+		OVERLAPPED ov = { 0 };
+		PostQueuedCompletionStatus(g_globalTaskQueue, 0, i, &ov);
+	}
+
+	WaitForMultipleObjects(g_testArgs.threadCount, g_threadHandleAry, TRUE, INFINITE);
+
+	TIMER_STOP;
+
+#ifdef _DEBUG
+	SPAN_END;
+#endif
+
+	SAFE_CLOSE_HANDLE(g_globalTaskQueue);
+
+	for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		SAFE_CLOSE_HANDLE(g_threadHandleAry[t]);
+
+	delete[] g_threadHandleAry;
+	delete[] g_threadIocpAry;
+
+	PROCESS_MEMORY_COUNTERS memCounter;
+	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
+
+	g_currentReadCallCount = 0;
+	g_currentComputeCount = 0;
+	g_currentTaskMode = FALSE;
+	g_completeFileCount = 0;
 
 	g_testResult.elapsedMS = el * 1000;
 	g_testResult.peakMem = memCounter.PeakPagefileUsage;
