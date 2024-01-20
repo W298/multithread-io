@@ -53,7 +53,7 @@ namespace ThreadSchedule
 
 	struct TestResult
 	{
-		double elapsedMiliseconds;
+		double elapsedMS;
 		UINT64 totalFileSize;
 		SIZE_T peakMem;
 	};
@@ -97,9 +97,9 @@ namespace ThreadSchedule
 	void CompletionTaskWork(UINT fid);
 	void ComputeTaskWork(UINT fid);
 
-	DWORD HandleLockAcquireFailure(UINT fid, UINT threadTaskType, const Concurrency::diagnostic::marker_series& series);
+	DWORD HandleLockAcquireFailure(const UINT fid, const UINT threadTaskType);
 	
-	void DoThreadTask(ThreadTaskArgs* args, UINT threadTaskType, const Concurrency::diagnostic::marker_series& series);
+	void DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskType);
 
 	DWORD WINAPI UniversalThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);

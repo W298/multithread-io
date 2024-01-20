@@ -24,17 +24,17 @@
     LARGE_INTEGER freq; \
     LARGE_INTEGER st,en; \
     double el; \
-    QueryPerformanceFrequency(&freq);
+    QueryPerformanceFrequency(&freq)
 
-#define TIMER_START QueryPerformanceCounter(&st);
+#define TIMER_START QueryPerformanceCounter(&st)
 
 #define TIMER_STOP \
     QueryPerformanceCounter(&en); \
-    el=(float)(en.QuadPart-st.QuadPart)/freq.QuadPart;
+    el=(float)(en.QuadPart-st.QuadPart)/freq.QuadPart
 
 #define TIMER_STOP_PRINT \
     QueryPerformanceCounter(&en); \
     el=(float)(en.QuadPart-st.QuadPart)/freq.QuadPart; \
-    std::wcout<<el*1000<<L" ms\n";
+    std::wcout<<el*1000<<L" ms\n"
 
 #endif // PCH_H
