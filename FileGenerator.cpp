@@ -1,19 +1,10 @@
 #include "pch.h"
 #include "FileGenerator.h"
 
-using namespace Concurrency::diagnostic;
-
 void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 {
-	SERIES_INIT(_T("Main Thread FileGenerator"));
-	SPAN_INIT;
-
-	SPAN_START(0, _T("File Generation"));
-
 	CreateDirectoryW(L"dummy", NULL);
 	const LPCTSTR path = L"dummy\\";
-
-	BYTE* buffer = static_cast<BYTE*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, args.FileSize.MaxByte));
 
 	std::random_device rd;
 	std::mt19937 generator(rd());
@@ -34,17 +25,19 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			fileByteSize = args.FileSize.Mean;
 			break;
 		case NORMAL_DIST:
-			fileByteSize = max(args.FileSize.MinByte, min(args.FileSize.MaxByte, round(abs(sizeNormalDist(generator)))));
+			fileByteSize = sizeNormalDist(generator);
 			break;
 		case EXP:
-			fileByteSize = max(args.FileSize.MinByte, min(args.FileSize.MaxByte, round(abs(sizeExpDist(generator)))));
+			fileByteSize = sizeExpDist(generator);
 			break;
 		}
 
-		const UINT fileComputeTime =
-			max(args.FileCompute.MinMicroSeconds, min(args.FileCompute.MaxMicroSeconds, round(abs(computeNormalDist(generator)))));
+		fileByteSize = max(args.FileSize.MinByte, min(args.FileSize.MaxByte, fileByteSize));
 
-		const HANDLE handle = CreateFileW(
+		UINT fileComputeTime = computeNormalDist(generator);
+		fileComputeTime = max(args.FileCompute.MinMicroSeconds, min(args.FileCompute.MaxMicroSeconds, fileComputeTime));
+
+		const HANDLE fileHandle = CreateFileW(
 			(path + std::to_wstring(fid)).c_str(),
 			GENERIC_WRITE,
 			0,
@@ -53,26 +46,15 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			FILE_FLAG_WRITE_THROUGH,
 			NULL);
 
+		BYTE* buffer = static_cast<BYTE*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, fileByteSize));
+
 		// Write compute time to file.
 		memcpy(buffer, &fileComputeTime, sizeof(UINT));
-		WriteFile(handle, buffer, fileByteSize, NULL, NULL);
-		
-		ZeroMemory(buffer, sizeof(UINT));
 
-		CloseHandle(handle);
-	}	
-	
-	HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
+		if (FALSE == WriteFile(fileHandle, buffer, fileByteSize, NULL, NULL))
+			ExitProcess(-5);
 
-	SPAN_END;
-}
-
-void FileGenerator::RemoveDummyFiles(UINT64 totalFileCount)
-{
-	for (UINT fid = 0; fid < totalFileCount; fid++)
-	{
-		std::wstring path = L"dummy\\";
-		DeleteFileW((path + std::to_wstring(fid)).c_str());
+		CloseHandle(fileHandle);
+		HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
 	}
-	RemoveDirectoryW(L"dummy");
 }

@@ -34,5 +34,4 @@ namespace FileGenerator
 	};
 
 	void GenerateDummyFiles(FileGenerationArgs fileGenerationArgs);
-	void RemoveDummyFiles(UINT64 totalFileCount);
 }
