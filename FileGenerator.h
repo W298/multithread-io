@@ -6,7 +6,8 @@ namespace FileGenerator
 	{
 		IDENTICAL,
 		NORMAL_DIST,
-		EXP
+		EXP,
+		SIZE_EVAL
 	};
 
 	struct FileSizeArgs

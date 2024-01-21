@@ -20,14 +20,14 @@ int main()
 	};
 	FileComputeArgs fileCompute =
 	{
-		50u,								// MinMicroSeconds
+		100u,								// MinMicroSeconds
 		5000u,								// MaxMicroSeconds
-		800u,								// Mean
-		800u								// Variance
+		2000u,								// Mean
+		2000u								// Variance
 	};
 	FileGenerationArgs fArgs =
 	{
-		10000,								// TotalFileCount
+		50,								// TotalFileCount
 		fileSize,							// FileSize
 		NORMAL_DIST,
 		fileCompute,						// FileCompute
@@ -37,8 +37,8 @@ int main()
 	GenerateDummyFiles(fArgs);
 #else
 
-	constexpr UINT testCount = 50;
-	constexpr UINT testFileCount = 100;
+	constexpr UINT testCount = 10;
+	constexpr UINT testFileCount = 50;
 
 	UINT64 totalFileSize = 0;
 	double mean = 0;
@@ -51,13 +51,13 @@ int main()
 #endif
 
 #ifdef SYNC
-		TestArgument args = { testFileCount, 5, NULL, testFileCount, testFileCount, TRUE };
+		TestArgument args = { testFileCount, 2, NULL, testFileCount, testFileCount, TRUE };
 		TestResult res = StartSyncThreadTasks(args);
 #endif
 
 #ifndef MMAP
 #ifndef SYNC
-		UINT threadRole[4] = { 1, 4, 0, 0 };
+		UINT threadRole[4] = { 1, 2, 0, 0 };
 		UINT totalThreadCount = 0;
 		for (UINT i = 0; i < 4; i++)
 			totalThreadCount += threadRole[i];
@@ -82,8 +82,6 @@ args.threadRole == NULL ? 0 : args.threadRole[2],
 args.threadRole == NULL ? 0 : args.threadRole[3],
 res.peakMem / (1024.0 * 1024.0),
 res.elapsedMS);
-
-#endif
 	}
 
 	printf("\n\n\n\n\
@@ -107,6 +105,8 @@ totalFileSize / (1024.0 * 1024.0)
 
 	mean /= testCount;
 	printf("%d Tested. Mean Elapsed time: %f ms\n\n\n\n", testCount, mean);
+
+#endif
 
 	return 0;
 }

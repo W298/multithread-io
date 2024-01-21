@@ -439,7 +439,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 
 #ifdef _DEBUG
 	SPAN_END;
-	SPAN_START(0, _T("ReadFile (%d)"), fid);
+	SPAN_START(1, _T("ReadFile (%d)"), fid);
 #endif
 
 	if (FALSE == ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, NULL) && GetLastError() != ERROR_IO_PENDING)
@@ -761,26 +761,25 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 			}
 		}
 	}
-	else if (threadRole == THREAD_ROLE_COMPUTE_ONLY || threadRole == THREAD_ROLE_COMPUTE_AND_READFILE)
+	else if (threadRole == THREAD_ROLE_COMPUTE_ONLY)
+	{
+		while (TRUE)
+		{
+			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
+		}
+	}
+	else if (threadRole == THREAD_ROLE_COMPUTE_AND_READFILE)
 	{
 		while (TRUE)
 		{
 			if (FALSE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
 			{
 				// If no compute task exists...
-				// Check read call task exists immediately, if flag is on.
-				if (threadRole == THREAD_ROLE_COMPUTE_AND_READFILE)
+				// Check read call task exists immediately.
+				if (TRUE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
 				{
-					// We'll not wait read call task.
-					if (TRUE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
-					{
-						// If exists, do read call task.
-						DO_TASK(key, THREAD_TASK_READ_CALL);
-					}
-					else
-					{
-						WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
-					}
+					// If exists, do read call task.
+					DO_TASK(key, THREAD_TASK_READ_CALL);
 				}
 				else
 				{

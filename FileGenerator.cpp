@@ -30,9 +30,13 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 		case EXP:
 			fileByteSize = sizeExpDist(generator);
 			break;
+		case SIZE_EVAL:
+			fileByteSize = 512 * 1024 * 1024 / pow(4, args.TotalFileCount - 1 - fid);
+			break;
 		}
 
-		fileByteSize = max(args.FileSize.MinByte, min(args.FileSize.MaxByte, fileByteSize));
+		if (args.FileSizeModel != SIZE_EVAL)
+			fileByteSize = max(args.FileSize.MinByte, min(args.FileSize.MaxByte, fileByteSize));
 
 		UINT fileComputeTime = computeNormalDist(generator);
 		fileComputeTime = max(args.FileCompute.MinMicroSeconds, min(args.FileCompute.MaxMicroSeconds, fileComputeTime));
