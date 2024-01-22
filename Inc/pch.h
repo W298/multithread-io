@@ -9,8 +9,8 @@
 #include <set>
 #include <Psapi.h>
 
+#ifdef _DEBUG
 #include "cvmarkersobj.h"
-
 #define SERIES_INIT(name) \
 	marker_series series(name)
 #define SPAN_INIT \
@@ -19,6 +19,7 @@
 	s = new span(series, cat, name, __VA_ARGS__)
 #define SPAN_END \
     delete s
+#endif
 
 #define TIMER_INIT \
     LARGE_INTEGER freq; \

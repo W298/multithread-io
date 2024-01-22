@@ -14,7 +14,10 @@
 	GetQueuedCompletionStatus(type == THREAD_TASK_READ_CALL ? g_globalTaskQueue : g_globalWaitingQueue, pRet, pKey, pLpov, INFINITE); \
 	DO_TASK(*pKey, type)
 
+#ifdef _DEBUG
 using namespace Concurrency::diagnostic;
+#endif
+
 using namespace ThreadSchedule;
 
 // Test arguments, results.
