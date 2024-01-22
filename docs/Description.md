@@ -589,6 +589,36 @@ Delta 12.99ms
 ```
 로 더 차이가 벌어진 것을 확인할 수 있다.
 
+또한 Compute time 평균을 4.88ms 로 늘렸을 때에도 측정해 보았는데,
+
+```
+131.46ms (Sync) vs 118.83ms (Overlapped IO)
+Delta 12.63ms
+```
+
+로 차이가 벌어진 것을 확인할 수 있다. 하지만 Compute time 이 상당히 커질 경우 오히려 동기로 읽는 것이 빨라지는 시점이 있는데,
+
+```
+222.35ms (Sync) vs 234.46ms (Overlapped IO)
+Delta -12.11ms
+```
+
+이러한 현상이 일어나는 이유는 ReadFile Task를 담당하는 쓰레드가 일을 마친 후 작업하고 있지 않아,  
+Compute 를 할 수 있는 쓰레드 수가 하나 줄기 때문에 이런 일이 발생하는 것이다.
+
+이는 총 쓰레드 개수가 달라지면 변화하는데,
+```
+189.62ms (5) vs 185.13ms (1/4)    -4.49ms
+159.82ms (6) vs 152.16ms (1/5)    +7.65ms
+141.92ms (7) vs 128.93ms (1/6)    +12.98ms
+133.60ms (8) vs 118.21ms (1/7)    +15.39ms
+```
+쓰레드 개수가 동일함에도 불구하고, 총 쓰레드 개수가 늘어날수록 Overlapped IO가 더욱 빨라진다.
+
+*결과적으로...*
+- 파일 사이즈가 클수록 Overlapped IO가 유리하다.
+- Compute time 이 길수록 Overlapped IO가 유리하나, 작은 총 쓰레드 수에서는 비슷하거나 오히려 나쁠 수 있다. 하지만 총 쓰레드 수가 늘어날수록 Overlapped IO가 유리해진다.
+
 ## Summary
 
 ![](https://github.com/W298/MultithreadIOSimulator/assets/25034289/259ed900-a018-4707-96b5-ff2a6879622f)
