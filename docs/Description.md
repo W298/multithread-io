@@ -8,7 +8,14 @@
 7. [Massive File Count](#Massive-File-Count)
 8. [Summary](#Summary)
 
+<br /><br /><br />
+
 ## Overlapped IO Performance
+
+> [!NOTE]
+> Overlapped IO를 사용하여 여러 파일을 겹쳐 Read를 수행해도 결국 거의 Read 자체 성능은 동일한 성능을 가진다.  
+> Overlapped IO 를 사용하면, Read Call Task의 실행시간에 영향을 받지 않고서 작업이 가능한 이점이 있다.  
+> 하지만 Computing 하는 작업은 결국 읽기가 끝나야 가능하기 때문에 이는 Overlapped IO의 이점을 살릴 수 없다.
 
 ![](https://github.com/W298/MultithreadIOSimulator/assets/25034289/1fd5cd9b-ee4b-457d-9105-008b32dcf031)
 
@@ -42,7 +49,14 @@ Overlapped IO를 사용하여 여러 파일을 겹쳐 Read를 수행해도 결�
 Overlapped IO 를 사용하여 여러 파일을 겹쳐 읽었을 때의 걸린 시간을 이용하여 읽기 속도를 계산해 보면,  
 `20 * 1024 MiB / 38.461s = 532 MiB/s` 로 현재 SSD 최대 속도와 근접한 모습을 보인다.
 
+<br /><br /><br />
+
 ## Multithread Sync vs Overlapped IO
+
+> [!NOTE]
+> 파일 사이즈가 클수록 동기식보다 Overlapped IO가 유리해진다.
+> Compute time 이 길수록 Overlapped IO가 유리하나, 총 쓰레드 수가 작을 경우 비슷하거나 오히려 나쁠 수 있다. 하지만 총 쓰레드 수가 늘어날수록 Overlapped IO가 유리해진다.
+
 ```
 File Count: 50
 File Size - Normal Dist (1MiB, 1KiB ~ 2MiB)
@@ -125,9 +139,15 @@ Compute 를 할 수 있는 쓰레드 수가 하나 줄기 때문에 이런 일�
 
 *결과적으로...*
 - 파일 사이즈가 클수록 Overlapped IO가 유리하다.
-- Compute time 이 길수록 Overlapped IO가 유리하나, 작은 총 쓰레드 수에서는 비슷하거나 오히려 나쁠 수 있다. 하지만 총 쓰레드 수가 늘어날수록 Overlapped IO가 유리해진다.
+- Compute time 이 길수록 Overlapped IO가 유리하나, 총 쓰레드 수가 작을 경우 비슷하거나 오히려 나쁠 수 있다. 하지만 총 쓰레드 수가 늘어날수록 Overlapped IO가 유리해진다.
+
+<br /><br /><br />
 
 ## Read Call Task Overhead
+
+> [!NOTE]
+> 파일 크기가 커질수록 ReadFile에 소요되는 시간이 Linear 하게 증가한다. CreateFile의 경우 파일 크기에 연관되어 있지 않다. 단순히 읽어들일 바이트 수에 영향을 받는 것으로, 디스크 읽기 속도와는 무관하다.  
+> ReadFile, CreateFile 을 커널이 처리하는 속도보다 훨씬 빠르게 Call 할 경우, 병목이 생겨 Waiting 이 걸린다.
 
 ```
 File distribution: IDENTICAL
@@ -159,7 +179,8 @@ Total file size: 3.9GiB (100만개)
 파일 크기가 커질수록 ReadFile에 소요되는 시간이 Linear 하게 증가한다.  
 CreateFile의 경우 파일 크기에 연관되어 있지 않다.
 
-SATA 기반 SSD에서 테스트했을 때와, NVMe 기반 SSD에서 테스트했을 때의 ReadFile에 걸린 시간이 동일한 것으로 보아, 디스크 속도와는 관련이 없다고 볼 수 있다. 읽어들일 바이트 수를 줄일 경우, 그 바이트 수만큼만 시간이 걸린다.
+SATA 기반 SSD에서 테스트했을 때와, NVMe 기반 SSD에서 테스트했을 때의 ReadFile에 걸린 시간이 동일한 것으로 보아,  
+디스크 속도와는 관련이 없다고 볼 수 있다. 읽어들일 바이트 수를 줄일 경우, 그 바이트 수만큼만 시간이 걸린다.
 
 ### File Count
 
@@ -197,7 +218,14 @@ SATA 기반 SSD에서 테스트했을 때와, NVMe 기반 SSD에서 테스트했
 
 즉, **ReadFile Call 보다는 아니지만**, CreateFile Call 또한 단일 시간 당 처리할 수 있는 양의 한계가 있다고 볼 수 있다.
 
+<br /><br /><br />
+
 ## Do Read Call Task as soon as possible
+
+> [!NOTE]
+> 파일 사이즈가 충분히 큰 경우에는 쓰레드 개수가 큰 의미를 부여하지 못하기 때문에, 쓰레드 개수를 줄여 자원을 절약하는 것이 이득이다.  
+> 파일 사이즈가 충분히 작은 경우에는 쓰레드 개수를 늘려 디스크가 놀지 않고 작업하게 하여 시간을 단축시킬 수 있으나, 커널에 병목 현상이 생길 수 있으므로 이는 한계가 존재한다.  
+> 따라서, 디스크가 파일을 Read 하는 데 걸리는 시간에 따라 쓰레드 개수를 정해야 한다.
 
 디스크를 최대한으로 사용하기 위해서는 어떻게 해야 할까?
 
@@ -327,17 +355,18 @@ Total file size: 33.332114 MiB (1만개)
 
 결국 단위 시간당 2배 만큼 Read Call Task 를 보냈으나, 이에 소요되는 시간이 `1.2177ms` 로 이전보다 (`0.6461ms`) 2배가 되면서 성능 향상이 이루어지지 못한 것이다.
 
-### Summary
-
 결론적으로,
-
 파일 사이즈가 충분히 큰 경우에는 쓰레드 개수가 큰 의미를 부여하지 못하기 때문에, 오히려 쓰레드 개수를 줄여 자원을 절약하는 것이 이득이다.  
-
-파일 사이즈가 충분히 작은 경우에는 쓰레드 개수를 늘려 디스크가 놀지 않고 작업하게 하여 시간을 단축시킬 수 있으나, 커널에 병목 현상이 생길 수 있으므로 이는 한계가 존재한다.
-
+파일 사이즈가 충분히 작은 경우에는 쓰레드 개수를 늘려 디스크가 놀지 않고 작업하게 하여 시간을 단축시킬 수 있으나, 커널에 병목 현상이 생길 수 있으므로 이는 한계가 존재한다.  
 따라서, 디스크가 파일을 Read 하는 데 걸리는 시간에 따라서 쓰레드 개수, ReadFile Call 타이밍을 정하는 것이 Optimal 하다.
 
+<br /><br /><br />
+
 ## Role Speficied Thread
+
+> [!NOTE]
+> Read Call Time을 최소화하면서도 Waiting 시간이 거의 없는 쓰레드 개수만큼을 Read Call Task Role로 할당하고,  
+> Compute time 과 파일 개수를 고려하여 Compute Task가 밀리지 않을 만큼의 쓰레드를 Compute Task Role로 할당하면 최적의 결과를 얻을 수 있다.
 
 ```
 File distribution: EXP
@@ -393,7 +422,13 @@ CPU 사용률 또한 그냥 24쓰레드로 진행했을 때보다 더 좋은 결
 
 이는 파일 구조, 사이즈, Compute Time 에 따라서 다른 결과를 보여줄 것이다.
 
+<br /><br /><br />
+
 ## Memory Mapped File
+
+> [!NOTE]
+> page size와 동일하거나 작은 파일 사이즈를 가지고, ReadFile, CreateFile 로 인해 커널에 병목이 생길만큼의 파일 개수를 처리해야 할 경우,
+> Memory Mapped File을 사용하는 것이 최적이다.
 
 Memory Mapped File은 Read 시간이 따로 존재하는 것이 아닌 해당 페이지에 접근할 시에 Page Fault가 발생하여 로드된다.  
 그러므로 먼저 기존 ReadFile Call과의 비교를 위해서는, Compute Task를 수정해야 한다.
@@ -542,6 +577,8 @@ Page의 크기 (16KiB) 만큼 잘려서 page fault가 발생하게 된다.
 
 위와 같이 Gap을 매울 수 있기 때문에, MMAP을 사용한 처리는 멀티쓰레드가 유리하다.
 
+<br /><br /><br />
+
 ## Massive File Count
 
 ```
@@ -619,11 +656,13 @@ Total file size: 3.44GiB (100만개)
 32쓰레드 - 28042ms
 ```
 
+<br /><br /><br />
+
 ## Summary
 
-![](https://github.com/W298/MultithreadIOSimulator/assets/25034289/259ed900-a018-4707-96b5-ff2a6879622f)
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/259ed900-a018-4707-96b5-ff2a6879622f" width="700px" />
 
-![](https://github.com/W298/MultithreadIOSimulator/assets/25034289/19a65b02-f062-4917-b5e8-fa2b4d945f38)
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/19a65b02-f062-4917-b5e8-fa2b4d945f38" width="700px" />
 
 ### File Size
 
