@@ -68,6 +68,8 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>c:\program files (x86)\microsoft visual studio\2019\professional\common7\ide\extensions\jcn3iwfw.vp2\SDK\Native\inc;$(SolutionDir)Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <PrecompiledHeader>Create</PrecompiledHeader>
+      <PrecompiledHeaderFile>$(SolutionDir)Inc\pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -82,8 +84,10 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>c:\program files (x86)\microsoft visual studio\2019\professional\common7\ide\extensions\jcn3iwfw.vp2\SDK\Native\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\program files (x86)\microsoft visual studio\2019\professional\common7\ide\extensions\jcn3iwfw.vp2\SDK\Native\inc;$(SolutionDir)Inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <PrecompiledHeader>Create</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
