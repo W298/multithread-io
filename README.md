@@ -1,4 +1,4 @@
-# multithread-io
+# :toolbox: multithread-io
 
 Multithread I/O simulation on Windows API.  
 Mainly focus on testing multithread & overlapped I/O on various enviornment (number of files, file size, compute time...)
