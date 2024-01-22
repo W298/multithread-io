@@ -1,3 +1,11 @@
+1. [Overlapped IO Performance](#Overlapped-IO-Performance)
+2. [Read Call Task Overhead](#Read-Call-Task-Overhead)
+3. [Do Read Call Task as soon as possible](#Do-Read-Call-Task-as-soon-as-possible)
+4. [Role Speficied Thread](#Role-Speficied-Thread)
+5. [Memory Mapped File](#Memory-Mapped-File)
+6. [Massive File Count](#Massive-File-Count)
+7. [Summary](#Summary)
+
 ## Overlapped IO Performance
 
 ![](https://github.com/W298/MultithreadIOSimulator/assets/25034289/1fd5cd9b-ee4b-457d-9105-008b32dcf031)
@@ -100,7 +108,7 @@ CreateFile의 경우 파일 크기에 연관되어 있지 않다.
 
 즉, **ReadFile Call 보다는 아니지만**, CreateFile Call 또한 단일 시간 당 처리할 수 있는 양의 한계가 있다고 볼 수 있다.
 
-## Read Call Task -> Compute Task
+## Do Read Call Task as soon as possible
 
 디스크를 최대한으로 사용하기 위해서는 어떻게 해야 할까?
 
@@ -240,7 +248,7 @@ Total file size: 33.332114 MiB (1만개)
 
 따라서, 디스크가 파일을 Read 하는 데 걸리는 시간에 따라서 쓰레드 개수, ReadFile Call 타이밍을 정하는 것이 Optimal 하다.
 
-## Thread Role
+## Role Speficied Thread
 
 ```
 File distribution: EXP
@@ -544,16 +552,3 @@ Total file size: 3.44GiB (100만개)
 
 - 파일 사이즈가 page size 보다 작고, 개수가 매우 많은 경우 Memory Mapped File을 사용하고, 가능한 한 많은 쓰레드를 할당해 주는 것이 유리하다.
 - ReadFile Call을 한번에 많이 몰아서 보내는 것보다, 전체 실행시간에 분포되도록 해야 한다.
-
-## CPU Usage
-
-```
-READFILE 8/8 - 66%
-READFILE 12/12 - 86%
-READFILE 16/16 - 99%
-MMAP 4 - 31%
-MMAP 8 - 51%
-MMAP 16 - 79%
-MMAP 24 - 91%
-MMAP 32 - 99%
-```
