@@ -5,7 +5,8 @@
 4. [Role Speficied Thread](#Role-Speficied-Thread)
 5. [Memory Mapped File](#Memory-Mapped-File)
 6. [Massive File Count](#Massive-File-Count)
-7. [Summary](#Summary)
+7. [Multithread Sync vs Overlapped IO](#Multithread-Sync-vs-Overlapped-IO)
+8. [Summary](#Summary)
 
 ## Overlapped IO Performance
 
@@ -52,9 +53,9 @@ Total file size: 3.9GiB (100만개)
 
 ### File Size
 
-![image](https://github.com/W298/MultithreadIOSimulator/assets/25034289/4c1dd9b0-2d5e-49cc-ab13-daaf33aa8f33)
+![image](https://github.com/W298/MultithreadIOSimulator/assets/25034289/073be919-6494-48dc-8b21-586ca2895e54)
 
-빨간색이 ReadFile Call, 파란색이 CreateFile Call 이다. 테스트는 싱글쓰레드에서 진행하였다.
+가로 축은 파일 크기 (512 * N Byte), 세로 축은 ReadFile 함수가 리턴되기까지 걸린 시간이다.
 
 | Size   | CF  | RF   |
 | ------ | --- | ---- |
@@ -70,8 +71,10 @@ Total file size: 3.9GiB (100만개)
 | 1KiB   | 0.1 | 0.05 |
 | 512B   | 0.1 | 0.04 |
 
-파일 크기가 커질수록 ReadFile에 소요되는 시간이 지수함수적으로 증가한다.  
+파일 크기가 커질수록 ReadFile에 소요되는 시간이 Linear 하게 증가한다.  
 CreateFile의 경우 파일 크기에 연관되어 있지 않다.
+
+SATA 기반 SSD에서 테스트했을 때와, NVMe 기반 SSD에서 테스트했을 때의 ReadFile에 걸린 시간이 동일한 것으로 보아, 디스크 속도와는 관련이 없다고 볼 수 있다. 읽어들일 바이트 수를 줄일 경우, 그 바이트 수만큼만 시간이 걸린다.
 
 ### File Count
 
@@ -530,6 +533,61 @@ Total file size: 3.44GiB (100만개)
 24쓰레드 - 27761ms
 32쓰레드 - 28042ms
 ```
+
+## Multithread Sync vs Overlapped IO
+```
+File Count: 50
+File Size - Normal Dist (1MiB, 1KiB ~ 2MiB)
+Compute time - Normal Dist (0.8ms, 0.05ms ~ 2.5ms)
+```
+
+**Sync**
+
+![image](https://github.com/W298/MultithreadIOSimulator/assets/25034289/d016e2ce-57da-42bf-95d7-345da2e3cc7d)
+*<SYNC 4 Thread (28.33ms)>*
+
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/36b96a66-de3b-4905-90a5-1c57aa5ead6b" width="350px" />
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/fd4c13df-6dcf-42f0-8017-36914bc6834e" width="350px" />
+
+```
+Execution 55%
+Sync 6%
+IO 38%
+```
+
+동기로 읽기를 진행했을 경우, IO, 즉 Waiting 하는 데에 38%를 사용하고 있다.
+
+**Overlapped IO**
+
+![image](https://github.com/W298/MultithreadIOSimulator/assets/25034289/7797fe24-e32e-4593-9025-7f214c75b005)
+*<Overalpped IO 1 Read / 3 Compute (21.62ms)>*
+
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/555b608b-2a39-4ade-afc5-986e045cc8a9" width="350px" />
+<img src="https://github.com/W298/MultithreadIOSimulator/assets/25034289/02abddd4-4bb9-4f12-a544-52a9489bd2e5" width="350px" />
+
+```
+Execution 79%
+Sync 18%
+IO 1%
+Preemption 2%
+```
+
+Overalpped IO를 사용하면 동기로 진행했을 때보다 Execution %가 높아진 것을 확인할 수 있다.  
+뿐만 아니라 걸린 시간도 단축되었다.
+
+Overlapped IO와 동기식 읽기의 차이는
+- Compute time 이 길수록,
+- 파일 사이즈가 클수록
+
+더욱 두드러지게 나타난다.
+
+실제로 평균 파일 사이즈를 10MiB 로 늘렸을 때,
+
+```
+945.63ms (Sync) vs 932.64ms (Overlapped IO)
+Delta 12.99ms
+```
+로 더 차이가 벌어진 것을 확인할 수 있다.
 
 ## Summary
 
