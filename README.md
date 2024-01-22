@@ -7,6 +7,9 @@ All test result and analyze is located at [description page](https://github.com/
 
 Profiling code is inserted with [Concurrency Visualizer](https://learn.microsoft.com/en-us/visualstudio/profiling/concurrency-visualizer?view=vs-2022) SDK.
 
+*On Debug build, you must install Concurrency Visualizer Extension, and add SDK to project.*  
+*On Release build, you don't have to install and include it.*
+
 ## Test Coverage
 
 1. Overlapped I/O vs Sync I/O Performance
