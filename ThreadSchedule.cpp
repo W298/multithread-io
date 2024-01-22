@@ -4,7 +4,7 @@
 #define DO_TASK(key, type) \
 	const UINT fid = static_cast<UINT>(key); \
 	if (fid == g_exitCode) break; \
-	if (fid >= g_testArgs.fileCount) ExitProcess(-5); \
+	if (fid >= g_testArgs.TestFileCount) THROW_ERROR(L"FID out of range."); \
 	if (type == THREAD_TASK_READ_CALL) \
 		ReadCallTaskWork(fid); \
 	else \
@@ -14,26 +14,24 @@
 	GetQueuedCompletionStatus(type == THREAD_TASK_READ_CALL ? g_globalTaskQueue : g_globalWaitingQueue, pRet, pKey, pLpov, INFINITE); \
 	DO_TASK(*pKey, type)
 
-#define SAFE_CLOSE_HANDLE(h) if (h != INVALID_HANDLE_VALUE) CloseHandle(h)
-
 using namespace Concurrency::diagnostic;
 using namespace ThreadSchedule;
 
+// Test arguments, results.
 TestArgument g_testArgs;
 TestResult g_testResult;
 
-UINT g_currentReadCallCount;
-UINT g_currentComputeCount;
-BOOL g_currentTaskMode;
+// Status.
+TaskMode g_taskMode;
 UINT g_completeFileCount;
 
 // Thread works.
-HANDLE g_globalTaskQueue;
-HANDLE g_globalWaitingQueue;
+HANDLE g_globalTaskQueue;		// Queue that store ReadCall tasks.
+HANDLE g_globalWaitingQueue;	// Queue that store Compute tasks.
 HANDLE* g_threadHandleAry;
 HANDLE* g_threadIocpAry;
 
-// SRW Locks.
+// SRW locks.
 SRWLOCK g_srwFileStatus;
 SRWLOCK g_srwFileLock;
 SRWLOCK g_srwFileHandle;
@@ -84,13 +82,12 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 #endif
 
 	HANDLE fileIOCP = NULL;
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
 		fileIOCP = CreateIoCompletionPort(fileHandle, NULL, 0, 0);
 	}
-	else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
+	else if (g_testArgs.SimType == SIM_ROLE_SPECIFIED_THREAD)
 	{
-		// All IOCP is same, we don't need to save.
 		CreateIoCompletionPort(fileHandle, g_globalWaitingQueue, fid, 0);
 	}
 
@@ -113,7 +110,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 	}
 	ReleaseSRWLockExclusive(&g_srwFileHandle);
 
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
 		AcquireSRWLockExclusive(&g_srwFileIocp);
 		{
@@ -131,7 +128,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 		if (FALSE == g_fileBufferSizeMap.contains(fid))
 			g_fileBufferSizeMap[fid] = fileByteSize.QuadPart;
 
-		g_testResult.totalFileSize += fileByteSize.QuadPart;
+		g_testResult.TotalFileSize += fileByteSize.QuadPart;
 	}
 	ReleaseSRWLockExclusive(&g_srwFileBuffer);
 
@@ -142,7 +139,7 @@ void ThreadSchedule::ReadCallTaskWork(const UINT fid)
 
 	OVERLAPPED ov = { 0 };
 	if (FALSE == ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, &ov) && GetLastError() != ERROR_IO_PENDING)
-		ExitProcess(-1);
+		THROW_ERROR(L"Failed to call ReadFile.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -195,7 +192,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	}
 	ReleaseSRWLockShared(&g_srwFileBuffer);
 
-	if (g_testArgs.enableComputeTime)
+	if (g_testArgs.UseDefinedComputeTime)
 	{
 		UINT timeOverMicroSeconds;
 		BOOL exit = FALSE;
@@ -204,7 +201,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 		TIMER_STOP;
 		while (el * 1000 * 1000 <= timeOverMicroSeconds)
 		{
-			// Calculate checksum.
+			// Calculate checksum with time limit.
 			{
 				int checkSum = 0;
 				int sum = 0;
@@ -263,7 +260,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	if (bufferAddress != nullptr)
 		VirtualFree(bufferAddress, 0, MEM_RELEASE);
 
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
 		AcquireSRWLockShared(&g_srwFileIocp);
 		if (g_fileIocpMap.contains(fid))
@@ -278,10 +275,9 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 
 	AcquireSRWLockExclusive(&g_srwFileFinish);
 	g_completeFileCount++;
-	if (g_completeFileCount == g_testArgs.fileCount)
+	if (g_completeFileCount == g_testArgs.TestFileCount)
 	{
-		std::cout << "Finished" << "\n";
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 		{
 			OVERLAPPED ov = { 0 };
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
@@ -295,7 +291,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 #endif
 }
 
-void ThreadSchedule::FileMapTaskWork(UINT fid)
+void ThreadSchedule::MMAPTaskWork(UINT fid)
 {
 #ifdef _DEBUG
 	SERIES_INIT((std::to_wstring(GetCurrentThreadId()) + L" FileMap").c_str());
@@ -314,7 +310,7 @@ void ThreadSchedule::FileMapTaskWork(UINT fid)
 			NULL);
 
 	if (fileHandle == INVALID_HANDLE_VALUE)
-		ExitProcess(9);
+		THROW_ERROR(L"Failed to open file.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -337,7 +333,7 @@ void ThreadSchedule::FileMapTaskWork(UINT fid)
 			NULL);
 
 	if (mapHandle == 0)
-		ExitProcess(9);
+		THROW_ERROR(L"Failed to map file.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -354,7 +350,7 @@ void ThreadSchedule::FileMapTaskWork(UINT fid)
 		);
 
 	if (mapView == NULL)
-		ExitProcess(9);
+		THROW_ERROR(L"Failed to create view of file.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -392,11 +388,10 @@ void ThreadSchedule::FileMapTaskWork(UINT fid)
 
 	AcquireSRWLockExclusive(&g_srwFileFinish);
 	g_completeFileCount++;
-	g_testResult.totalFileSize += fileByteSize.QuadPart;
-	if (g_completeFileCount == g_testArgs.fileCount)
+	g_testResult.TotalFileSize += fileByteSize.QuadPart;
+	if (g_completeFileCount == g_testArgs.TestFileCount)
 	{
-		std::cout << "Finished" << "\n";
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 		{
 			OVERLAPPED ov = { 0 };
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
@@ -424,7 +419,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 			NULL);
 
 	if (fileHandle == INVALID_HANDLE_VALUE)
-		ExitProcess(9);
+		THROW_ERROR(L"Failed to open file.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -443,7 +438,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 #endif
 
 	if (FALSE == ReadFile(fileHandle, fileBuffer, alignedFileByteSize, NULL, NULL) && GetLastError() != ERROR_IO_PENDING)
-		ExitProcess(-1);
+		THROW_ERROR(L"Failed to call ReadFile.");
 
 #ifdef _DEBUG
 	SPAN_END;
@@ -453,7 +448,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 	TIMER_INIT;
 	TIMER_START;
 
-	if (g_testArgs.enableComputeTime)
+	if (g_testArgs.UseDefinedComputeTime)
 	{
 		UINT timeOverMicroSeconds;
 		BOOL exit = FALSE;
@@ -462,7 +457,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 		TIMER_STOP;
 		while (el * 1000 * 1000 <= timeOverMicroSeconds)
 		{
-			// Calculate checksum.
+			// Calculate checksum with time limit.
 			{
 				int checkSum = 0;
 				int sum = 0;
@@ -522,11 +517,10 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 
 	AcquireSRWLockExclusive(&g_srwFileFinish);
 	g_completeFileCount++;
-	g_testResult.totalFileSize += fileByteSize.QuadPart;
-	if (g_completeFileCount == g_testArgs.fileCount)
+	g_testResult.TotalFileSize += fileByteSize.QuadPart;
+	if (g_completeFileCount == g_testArgs.TestFileCount)
 	{
-		std::cout << "Finished" << "\n";
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 		{
 			OVERLAPPED ov = { 0 };
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, g_exitCode, &ov);
@@ -535,11 +529,10 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 	ReleaseSRWLockExclusive(&g_srwFileFinish);
 }
 
-// Failed to get lock, which means another thread is processing task.
 DWORD ThreadSchedule::HandleLockAcquireFailure(const UINT fid, const UINT threadTaskType)
 {
-	const HANDLE* fileSemAry = g_fileLockMap[fid]->sem;
-	const HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEv;
+	const HANDLE* fileSemAry = g_fileLockMap[fid]->semLock;
+	const HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEvent;
 
 	UINT fileStatus = 0;
 	AcquireSRWLockShared(&g_srwFileStatus);
@@ -551,29 +544,18 @@ DWORD ThreadSchedule::HandleLockAcquireFailure(const UINT fid, const UINT thread
 	// Another thread is processing pre-require task.
 	if (fileStatus < threadTaskType * 3)
 	{
-		if (g_waitDependencyFront)
-		{
-			// Waiting until pre-require task ends.
-			const DWORD result = WaitForSingleObject(fileSemAry[threadTaskType], INFINITE);
+		// Waiting until pre-require task ends.
+		const DWORD result = WaitForSingleObject(fileSemAry[threadTaskType], INFINITE);
 
-			// Do your job!
-			return result;
-		}
-		// If g_waitDependencyFront false, we'll check later.
-		
-		// Ignore your job!
-		return WAIT_TIMEOUT;
+		// Do your job!
+		return result;
 	}
 
 	// Another thread is processing requested task.
 	if (threadTaskType * 3 <= fileStatus && fileStatus < (threadTaskType + 1) * 3)
 	{
-		if (g_waitDependencyFront)
-		{
-			// Waiting until requested task ends.
-			WaitForSingleObject(taskEndEvAry[threadTaskType], INFINITE);
-		}
-		// If g_waitDependencyFront false, we'll check later.
+		// Waiting until requested task ends.
+		WaitForSingleObject(taskEndEvAry[threadTaskType], INFINITE);
 
 		// Ignore your job!
 		return WAIT_TIMEOUT;
@@ -597,8 +579,8 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskTyp
 #endif
 
 	const UINT fid = args->FID;
-	const HANDLE* fileSemAry = g_fileLockMap[fid]->sem;
-	const HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEv;
+	const HANDLE* fileSemAry = g_fileLockMap[fid]->semLock;
+	const HANDLE* taskEndEvAry = g_fileLockMap[fid]->taskEndEvent;
 
 	DWORD waitResult = WaitForSingleObject(fileSemAry[threadTaskType], 0L);
 	if (waitResult == WAIT_TIMEOUT)	// If failed to get lock...
@@ -658,7 +640,7 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskTyp
 	HeapFree(GetProcessHeap(), 0, args);
 }
 
-DWORD WINAPI ThreadSchedule::UniversalThreadFunc(const LPVOID param)
+DWORD WINAPI ThreadSchedule::ManualThreadFunc(const LPVOID param)
 {
 	const HANDLE threadIOCPHandle = param;
 
@@ -699,25 +681,41 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 	ULONG_PTR key;
 	LPOVERLAPPED lpov;
 
-	if (threadRole == THREAD_ROLE_BOTH)
+	if (threadRole == THREAD_ROLE_READCALL_ONLY)
 	{
 		while (TRUE)
 		{
-			if (FALSE == g_currentTaskMode)
+			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_READ_CALL);
+		}
+	}
+	else if (threadRole == THREAD_ROLE_COMPUTE_ONLY)
+	{
+		while (TRUE)
+		{
+			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
+		}
+	}
+	else if (threadRole == THREAD_ROLE_READCALL_AND_COMPUTE)
+	{
+		while (TRUE)
+		{
+			if (FALSE == g_taskMode.IsComputeTaskTurn)
 			{
-				// Read call task exists...
+				// If ReadCall task exists...
 				if (TRUE == GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, 0L))
 				{
 					if (key == g_exitCode) break;
 
 					AcquireSRWLockExclusive(&g_srwTaskMode);
-					if (g_currentReadCallCount < g_testArgs.readCallLimit)
+					if (g_taskMode.ReadCallTaskCount < g_testArgs.ReadCallTaskLimit)
 					{
-						g_currentReadCallCount++;
-						if (g_currentReadCallCount == g_testArgs.readCallLimit)
+						g_taskMode.ReadCallTaskCount++;
+
+						// If thread reached at ReadCall task limit, change turn.
+						if (g_taskMode.ReadCallTaskCount == g_testArgs.ReadCallTaskLimit)
 						{
-							g_currentTaskMode = TRUE;
-							g_currentReadCallCount = 0;
+							g_taskMode.IsComputeTaskTurn = TRUE;
+							g_taskMode.ReadCallTaskCount = 0;
 						}
 						ReleaseSRWLockExclusive(&g_srwTaskMode);
 
@@ -730,6 +728,7 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 				}
 				else
 				{
+					// Check if Compute task exists...
 					if (TRUE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, 0L))
 					{
 						DO_TASK(key, THREAD_TASK_COMPUTE);
@@ -741,13 +740,15 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 				if (TRUE == GetQueuedCompletionStatus(g_globalWaitingQueue, &ret, &key, &lpov, INFINITE))
 				{
 					AcquireSRWLockExclusive(&g_srwTaskMode);
-					if (g_currentComputeCount < g_testArgs.computeLimit)
+					if (g_taskMode.ComputeTaskCount < g_testArgs.ComputeTaskLimit)
 					{
-						g_currentComputeCount++;
-						if (g_currentComputeCount == g_testArgs.computeLimit)
+						g_taskMode.ComputeTaskCount++;
+
+						// If thread reached at Compute task limit, change turn.
+						if (g_taskMode.ComputeTaskCount == g_testArgs.ComputeTaskLimit)
 						{
-							g_currentTaskMode = FALSE;
-							g_currentComputeCount = 0;
+							g_taskMode.IsComputeTaskTurn = FALSE;
+							g_taskMode.ComputeTaskCount = 0;
 						}
 						ReleaseSRWLockExclusive(&g_srwTaskMode);
 
@@ -761,14 +762,7 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 			}
 		}
 	}
-	else if (threadRole == THREAD_ROLE_COMPUTE_ONLY)
-	{
-		while (TRUE)
-		{
-			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_COMPUTE);
-		}
-	}
-	else if (threadRole == THREAD_ROLE_COMPUTE_AND_READFILE)
+	else if (threadRole == THREAD_ROLE_COMPUTE_AND_READCALL)
 	{
 		while (TRUE)
 		{
@@ -792,18 +786,11 @@ DWORD ThreadSchedule::RoleSpecifiedThreadFunc(const LPVOID param)
 			}
 		}
 	}
-	else if (threadRole == THREAD_ROLE_READFILE_CALL_ONLY)
-	{
-		while (TRUE)
-		{
-			WAIT_AND_DO_TASK(&ret, &key, &lpov, THREAD_TASK_READ_CALL);
-		}
-	}
 
 	return 0;
 }
 
-DWORD ThreadSchedule::FileMapThreadFunc(const LPVOID param)
+DWORD ThreadSchedule::MMAPThreadFunc(const LPVOID param)
 {
 	UNREFERENCED_PARAMETER(param);
 
@@ -816,9 +803,9 @@ DWORD ThreadSchedule::FileMapThreadFunc(const LPVOID param)
 		GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, INFINITE);
 
 		if (key == g_exitCode) break;
-		if (key >= g_testArgs.fileCount) ExitProcess(-5);
+		if (key >= g_testArgs.TestFileCount) THROW_ERROR(L"FID out of range.");
 
-		FileMapTaskWork(key);
+		MMAPTaskWork(key);
 	}
 }
 
@@ -835,13 +822,13 @@ DWORD ThreadSchedule::SyncThreadFunc(LPVOID param)
 		GetQueuedCompletionStatus(g_globalTaskQueue, &ret, &key, &lpov, INFINITE);
 
 		if (key == g_exitCode) break;
-		if (key >= g_testArgs.fileCount) ExitProcess(-5);
+		if (key >= g_testArgs.TestFileCount) THROW_ERROR(L"FID out of range.");
 
 		SyncTaskWork(key);
 	}
 }
 
-TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
+TestResult ThreadSchedule::StartTest(TestArgument args)
 {
 #ifdef _DEBUG
 	SERIES_INIT(_T("Main Thread"));
@@ -851,71 +838,89 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	g_testResult = { 0 };
 	g_testArgs = args;
 
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
 		InitializeSRWLock(&g_srwFileStatus);
 		InitializeSRWLock(&g_srwFileLock);
 		InitializeSRWLock(&g_srwFileIocp);
 	}
 
-	InitializeSRWLock(&g_srwFileHandle);
-	InitializeSRWLock(&g_srwFileBuffer);
-	InitializeSRWLock(&g_srwTaskMode);
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD || g_testArgs.SimType == SIM_ROLE_SPECIFIED_THREAD)
+	{
+		InitializeSRWLock(&g_srwFileHandle);
+		InitializeSRWLock(&g_srwFileBuffer);
+		InitializeSRWLock(&g_srwTaskMode);
+	}
+
 	InitializeSRWLock(&g_srwFileFinish);
 
 	// Initialize global IOCP.
-	if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
+	if (g_testArgs.SimType == SIM_ROLE_SPECIFIED_THREAD)
 	{
-		g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.threadCount);
-		g_globalWaitingQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.threadCount);
+		g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.ThreadCount);
+		g_globalWaitingQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.ThreadCount);
+	}
+	else if (g_testArgs.SimType == SIM_SYNC_THREAD || g_testArgs.SimType == SIM_MMAP_THREAD)
+	{
+		g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.ThreadCount);
 	}
 
-	g_threadHandleAry = new HANDLE[g_testArgs.threadCount];
-	g_threadIocpAry = new HANDLE[g_testArgs.threadCount];
+	g_threadHandleAry = new HANDLE[g_testArgs.ThreadCount];
+	g_threadIocpAry = new HANDLE[g_testArgs.ThreadCount];
 
 	// Create threads.
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
+	for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 	{
 		DWORD tid = 0;
 		HANDLE threadHandle = NULL;
 
-		if (g_simType == SIM_UNIVERSAL_THREAD)
+		switch (g_testArgs.SimType)
 		{
+		case SIM_MANUAL_TASK_THREAD:
 			g_threadIocpAry[t] = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
-			threadHandle = CreateThread(NULL, 0, UniversalThreadFunc, g_threadIocpAry[t], CREATE_SUSPENDED, &tid);
-		}
-		else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
+			threadHandle = CreateThread(NULL, 0, ManualThreadFunc, g_threadIocpAry[t], CREATE_SUSPENDED, &tid);
+			break;
+
+		case SIM_ROLE_SPECIFIED_THREAD:
 		{
-			// Assign thread roles.
-			UINT threadType = (t < g_testArgs.threadRole[0]) ? 0 : (g_testArgs.threadRole[0] <= t && t < g_testArgs.threadRole[0] + g_testArgs.threadRole[1]) ? 1 : (g_testArgs.threadRole[0] + g_testArgs.threadRole[1] <= t && t < g_testArgs.threadRole[0] + g_testArgs.threadRole[1] + g_testArgs.threadRole[2]) ? 2 : 3;
+			UINT threadType =
+				(t < g_testArgs.ThreadRoleAry[0]) ? 0 :
+				(g_testArgs.ThreadRoleAry[0] <= t &&
+					t < g_testArgs.ThreadRoleAry[0] + g_testArgs.ThreadRoleAry[1]) ? 1 :
+				(g_testArgs.ThreadRoleAry[0] + g_testArgs.ThreadRoleAry[1] <= t &&
+					t < g_testArgs.ThreadRoleAry[0] + g_testArgs.ThreadRoleAry[1] + g_testArgs.ThreadRoleAry[2]) ? 2 : 3;
+
 			threadHandle = CreateThread(NULL, 0, RoleSpecifiedThreadFunc, reinterpret_cast<LPVOID>(threadType), 0, &tid);
+			break;
+		}
+
+		case SIM_SYNC_THREAD:
+			threadHandle = CreateThread(NULL, 0, SyncThreadFunc, NULL, 0, &tid);
+			break;
+
+		case SIM_MMAP_THREAD:
+			threadHandle = CreateThread(NULL, 0, MMAPThreadFunc, NULL, 0, &tid);
+			break;
 		}
 
 		if (threadHandle == NULL)
-			ExitProcess(3);
+			THROW_ERROR(L"Failed to create thread.");
 
 		g_threadHandleAry[t] = threadHandle;
 	}
 
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 			ResumeThread(g_threadHandleAry[t]);
-	}
 
-	// Create root file locking & status objects.
-	if (g_simType == SIM_UNIVERSAL_THREAD)
-	{
-		for (UINT i = 0; i < args.fileCount; i++)
+		// Create root file locking & status objects.
+		for (UINT i = 0; i < args.TestFileCount; i++)
 		{
 			const UINT rootFID = i;
 			g_fileLockMap[rootFID] = new FileLock(rootFID);
 			g_fileStatusMap[rootFID] = 0;
 		}
-	}
-	else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
-	{
-		// Don't need to create lock object.
 	}
 
 #ifdef _DEBUG
@@ -926,65 +931,37 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	TIMER_START;
 
 	// Post tasks.
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	switch (g_testArgs.SimType)
 	{
-		// 1. Uniformly distribute.
-		/*for (UINT i = 0; i < rootFIDAryCount; i++)
+	case SIM_MANUAL_TASK_THREAD:
+		for (UINT i = 0; i < args.TestFileCount; i++)
 		{
-			PostThreadTask(i % g_testArgs.threadCount, rootFIDAry[i], THREAD_TASK_READ_CALL);
-			PostThreadTask(i % g_testArgs.threadCount, rootFIDAry[i], THREAD_TASK_COMPLETION);
-			PostThreadTask(i % g_testArgs.threadCount, rootFIDAry[i], THREAD_TASK_COMPUTE);
-		}*/
-
-		// 2. Define thread tasks.
-		for (UINT i = 0; i < args.fileCount/4; i++)
-		{
-			PostThreadTask(0, i*4, THREAD_TASK_READ_CALL);
-			PostThreadTask(1, i*4+1, THREAD_TASK_READ_CALL);
-			PostThreadTask(2, i*4+2, THREAD_TASK_READ_CALL);
-			PostThreadTask(3, i*4+3, THREAD_TASK_READ_CALL);
+			PostThreadTask(i % g_testArgs.ThreadCount, i, THREAD_TASK_READ_CALL);
+			PostThreadTask(i % g_testArgs.ThreadCount, i, THREAD_TASK_COMPLETION);
+			PostThreadTask(i % g_testArgs.ThreadCount, i, THREAD_TASK_COMPUTE);
 		}
-
-		for (UINT i = 0; i < args.fileCount/2; i++)
-		{
-			PostThreadTask(4, i*2, THREAD_TASK_COMPLETION);
-			PostThreadTask(5, i*2+1, THREAD_TASK_COMPLETION);
-		}
-
-		for (UINT i = 0; i < args.fileCount/8; i++)
-		{
-			PostThreadTask(6, i*8, THREAD_TASK_COMPUTE);
-			PostThreadTask(7, i*8+1, THREAD_TASK_COMPUTE);
-			PostThreadTask(8, i*8+2, THREAD_TASK_COMPUTE);
-			PostThreadTask(9, i*8+3, THREAD_TASK_COMPUTE);
-			PostThreadTask(10, i*8+4, THREAD_TASK_COMPUTE);
-			PostThreadTask(11, i*8+5, THREAD_TASK_COMPUTE);
-			PostThreadTask(12, i*8+6, THREAD_TASK_COMPUTE);
-			PostThreadTask(13, i*8+7, THREAD_TASK_COMPUTE);
-		}
-	}
-	else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
-	{
-		for (UINT i = 0; i < args.fileCount; i++)
+		break;
+	
+	case SIM_ROLE_SPECIFIED_THREAD:
+	case SIM_SYNC_THREAD:
+	case SIM_MMAP_THREAD:
+		for (UINT i = 0; i < args.TestFileCount; i++)
 		{
 			OVERLAPPED ov = { 0 };
 			PostQueuedCompletionStatus(g_globalTaskQueue, 0, i, &ov);
 		}
+		break;
 	}
 	
 	// Post thread termination.
-	if (g_simType == SIM_UNIVERSAL_THREAD)
+	if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 	{
 		// Post exit to all threads.
-		for (UINT t = 0; t < g_testArgs.threadCount; t++)
+		for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 			PostThreadExit(t);
 	}
-	else if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
-	{
-		// Post exit on last compute task.
-	}
 
-	WaitForMultipleObjects(g_testArgs.threadCount, g_threadHandleAry, TRUE, INFINITE);
+	WaitForMultipleObjects(g_testArgs.ThreadCount, g_threadHandleAry, TRUE, INFINITE);
 	TIMER_STOP;
 
 #ifdef _DEBUG
@@ -992,28 +969,30 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 #endif
 
 	// Release cached data.
-	{
-		for (UINT i = 0; i < g_fileLockMap.size(); i++)
-			delete g_fileLockMap[i];
+	for (UINT i = 0; i < g_fileLockMap.size(); i++)
+		delete g_fileLockMap[i];
 
-		g_fileBufferMap.clear();
-		g_fileBufferSizeMap.clear();
-		g_fileIocpMap.clear();
-		g_fileHandleMap.clear();
-		g_fileLockMap.clear();
-	}
+	g_fileBufferMap.clear();
+	g_fileBufferSizeMap.clear();
+	g_fileIocpMap.clear();
+	g_fileHandleMap.clear();
+	g_fileLockMap.clear();
 
 	// Close global IOCP.
-	if (g_simType == SIM_ROLE_SPECIFIED_THREAD)
+	if (g_testArgs.SimType == SIM_ROLE_SPECIFIED_THREAD)
 	{
 		SAFE_CLOSE_HANDLE(g_globalTaskQueue);
 		SAFE_CLOSE_HANDLE(g_globalWaitingQueue);
 	}
+	else if (g_testArgs.SimType == SIM_SYNC_THREAD || g_testArgs.SimType == SIM_MMAP_THREAD)
+	{
+		SAFE_CLOSE_HANDLE(g_globalTaskQueue);
+	}
 
 	// Release thread handle/IOCP.
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
+	for (UINT t = 0; t < g_testArgs.ThreadCount; t++)
 	{
-		if (g_simType == SIM_UNIVERSAL_THREAD)
+		if (g_testArgs.SimType == SIM_MANUAL_TASK_THREAD)
 			SAFE_CLOSE_HANDLE(g_threadIocpAry[t]);
 
 		SAFE_CLOSE_HANDLE(g_threadHandleAry[t]);
@@ -1022,160 +1001,16 @@ TestResult ThreadSchedule::StartThreadTasks(TestArgument args)
 	delete[] g_threadHandleAry;
 	delete[] g_threadIocpAry;
 
+	// Analyze results.
 	PROCESS_MEMORY_COUNTERS memCounter;
 	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
 
-	g_currentReadCallCount = 0;
-	g_currentComputeCount = 0;
-	g_currentTaskMode = FALSE;
+	// Reset status for next test.
+	g_taskMode = { 0 };
 	g_completeFileCount = 0;
 
-	g_testResult.elapsedMS = el * 1000;
-	g_testResult.peakMem = memCounter.PeakPagefileUsage;
-
-	return g_testResult;
-}
-
-TestResult ThreadSchedule::StartThreadTasksFileMap(TestArgument args)
-{
-#ifdef _DEBUG
-	SERIES_INIT(_T("Main Thread"));
-	SPAN_INIT;
-#endif
-
-	g_testResult = { 0 };
-	g_testArgs = args;
-
-	InitializeSRWLock(&g_srwFileFinish);
-
-	g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.threadCount);
-
-	g_threadHandleAry = new HANDLE[g_testArgs.threadCount];
-	g_threadIocpAry = new HANDLE[g_testArgs.threadCount];
-
-	// Create threads.
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
-	{
-		DWORD tid = 0;
-		HANDLE threadHandle = CreateThread(NULL, 0, FileMapThreadFunc, NULL, 0, &tid);
-
-		if (threadHandle == NULL)
-			ExitProcess(3);
-
-		g_threadHandleAry[t] = threadHandle;
-	}
-
-#ifdef _DEBUG
-	SPAN_START(0, _T("Loading Time"));
-#endif
-
-	TIMER_INIT;
-	TIMER_START;
-
-	for (UINT i = 0; i < args.fileCount; i++)
-	{
-		OVERLAPPED ov = { 0 };
-		PostQueuedCompletionStatus(g_globalTaskQueue, 0, i, &ov);
-	}
-
-	WaitForMultipleObjects(g_testArgs.threadCount, g_threadHandleAry, TRUE, INFINITE);
-
-	TIMER_STOP;
-
-#ifdef _DEBUG
-	SPAN_END;
-#endif
-
-	SAFE_CLOSE_HANDLE(g_globalTaskQueue);
-
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
-		SAFE_CLOSE_HANDLE(g_threadHandleAry[t]);
-
-	delete[] g_threadHandleAry;
-	delete[] g_threadIocpAry;
-
-	PROCESS_MEMORY_COUNTERS memCounter;
-	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
-
-	g_currentReadCallCount = 0;
-	g_currentComputeCount = 0;
-	g_currentTaskMode = FALSE;
-	g_completeFileCount = 0;
-
-	g_testResult.elapsedMS = el * 1000;
-	g_testResult.peakMem = memCounter.PeakPagefileUsage;
-
-	return g_testResult;
-}
-
-TestResult ThreadSchedule::StartSyncThreadTasks(TestArgument args)
-{
-#ifdef _DEBUG
-	SERIES_INIT(_T("Main Thread"));
-	SPAN_INIT;
-#endif
-
-	g_testResult = { 0 };
-	g_testArgs = args;
-
-	InitializeSRWLock(&g_srwFileFinish);
-
-	g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.threadCount);
-
-	g_threadHandleAry = new HANDLE[g_testArgs.threadCount];
-	g_threadIocpAry = new HANDLE[g_testArgs.threadCount];
-
-	// Create threads.
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
-	{
-		DWORD tid = 0;
-		HANDLE threadHandle = CreateThread(NULL, 0, SyncThreadFunc, NULL, 0, &tid);
-
-		if (threadHandle == NULL)
-			ExitProcess(3);
-
-		g_threadHandleAry[t] = threadHandle;
-	}
-
-#ifdef _DEBUG
-	SPAN_START(0, _T("Loading Time"));
-#endif
-
-	TIMER_INIT;
-	TIMER_START;
-
-	for (UINT i = 0; i < args.fileCount; i++)
-	{
-		OVERLAPPED ov = { 0 };
-		PostQueuedCompletionStatus(g_globalTaskQueue, 0, i, &ov);
-	}
-
-	WaitForMultipleObjects(g_testArgs.threadCount, g_threadHandleAry, TRUE, INFINITE);
-
-	TIMER_STOP;
-
-#ifdef _DEBUG
-	SPAN_END;
-#endif
-
-	SAFE_CLOSE_HANDLE(g_globalTaskQueue);
-
-	for (UINT t = 0; t < g_testArgs.threadCount; t++)
-		SAFE_CLOSE_HANDLE(g_threadHandleAry[t]);
-
-	delete[] g_threadHandleAry;
-	delete[] g_threadIocpAry;
-
-	PROCESS_MEMORY_COUNTERS memCounter;
-	GetProcessMemoryInfo(GetCurrentProcess(), &memCounter, sizeof(memCounter));
-
-	g_currentReadCallCount = 0;
-	g_currentComputeCount = 0;
-	g_currentTaskMode = FALSE;
-	g_completeFileCount = 0;
-
-	g_testResult.elapsedMS = el * 1000;
-	g_testResult.peakMem = memCounter.PeakPagefileUsage;
+	g_testResult.ElapsedTime = el * 1000;
+	g_testResult.PeakMemory = memCounter.PeakPagefileUsage;
 
 	return g_testResult;
 }
@@ -1191,34 +1026,11 @@ void ThreadSchedule::PostThreadTask(const UINT t, const UINT fid, const UINT thr
 	args->FID = fid;
 
 	if (FALSE == PostQueuedCompletionStatus(g_threadIocpAry[t], 0, threadTaskType, reinterpret_cast<LPOVERLAPPED>(args)))
-		ExitProcess(9);
+		THROW_ERROR(L"Failed to post task.");
 }
 
 void ThreadSchedule::PostThreadExit(const UINT t)
 {
 	if (FALSE == PostQueuedCompletionStatus(g_threadIocpAry[t], 0, g_exitCode, NULL))
-		ExitProcess(9);
-}
-
-void ThreadSchedule::InsertThreadTaskFront(const UINT t, const UINT* fidAry, const UINT* threadTaskTypeAry, const UINT count)
-{
-	OVERLAPPED_ENTRY entAry[1000];
-	ULONG entRemoved;
-
-	GetQueuedCompletionStatusEx(g_threadIocpAry[t], entAry, 1000, &entRemoved, 0L, FALSE);
-
-	for (UINT i = 0; i < count; i++)
-		PostThreadTask(t, fidAry[i], threadTaskTypeAry[i]);
-
-	for (UINT i = 0; i < entRemoved; i++)
-	{
-		if (entAry[i].lpCompletionKey == g_exitCode)
-		{
-			PostThreadExit(t);
-			continue;
-		}
-
-		const ThreadTaskArgs* args = reinterpret_cast<ThreadTaskArgs*>(entAry[i].lpOverlapped);
-		PostThreadTask(t, args->FID, static_cast<UINT>(entAry[i].lpCompletionKey));
-	}
+		THROW_ERROR(L"Failed to post exit task.");
 }

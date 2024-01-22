@@ -37,4 +37,8 @@
     el=(float)(en.QuadPart-st.QuadPart)/freq.QuadPart; \
     std::wcout<<el*1000<<L" ms\n"
 
+#define SAFE_CLOSE_HANDLE(h) if (h != INVALID_HANDLE_VALUE) CloseHandle(h)
+
+#define THROW_ERROR(msg) { MessageBox(NULL, msg, L"Critical Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL); ExitProcess(-1); }
+
 #endif // PCH_H

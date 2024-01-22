@@ -4,7 +4,28 @@
 void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 {
 	CreateDirectoryW(L"dummy", NULL);
-	const LPCTSTR path = L"dummy\\";
+
+	// Write distribution info file.
+	{
+		const HANDLE distFileHandle = 
+			CreateFileW(
+				L"dummy\\distribution",
+				GENERIC_WRITE,
+				0,
+				NULL,
+				CREATE_ALWAYS,
+				FILE_FLAG_WRITE_THROUGH,
+				NULL);
+
+		BYTE* buffer = static_cast<BYTE*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(FileGenerationArgs)));
+		memcpy(buffer, &args, sizeof(FileGenerationArgs));
+
+		if (FALSE == WriteFile(distFileHandle, buffer, sizeof(FileGenerationArgs), NULL, NULL))
+			THROW_ERROR(L"Failed to call WriteFile.");
+
+		CloseHandle(distFileHandle);
+		HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
+	}
 
 	std::random_device rd;
 	std::mt19937 generator(rd());
@@ -12,12 +33,12 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 	std::exponential_distribution<double> sizeExpDist(1.0 / args.FileSize.Mean);
 	std::normal_distribution<double> computeNormalDist(args.FileCompute.Mean, args.FileCompute.Variance);
 
+	// Generate dummy files.
 	for (UINT fid = 0; fid < args.TotalFileCount; fid++)
 	{
 		if (fid % 1000 == 0)
-			std::cout << fid << "\n";
+			printf("%d th file creation completed.\n", fid);
 
-		// File creation.
 		UINT64 fileByteSize = args.FileSize.MinByte;
 		switch (args.FileSizeModel)
 		{
@@ -31,7 +52,7 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 			fileByteSize = sizeExpDist(generator);
 			break;
 		case SIZE_EVAL:
-			fileByteSize = 512 * 1024 * 1024 / pow(4, args.TotalFileCount - 1 - fid);
+			fileByteSize = args.FileSize.MaxByte / pow(4, args.TotalFileCount - 1 - fid);
 			break;
 		}
 
@@ -41,22 +62,21 @@ void FileGenerator::GenerateDummyFiles(const FileGenerationArgs args)
 		UINT fileComputeTime = computeNormalDist(generator);
 		fileComputeTime = max(args.FileCompute.MinMicroSeconds, min(args.FileCompute.MaxMicroSeconds, fileComputeTime));
 
-		const HANDLE fileHandle = CreateFileW(
-			(path + std::to_wstring(fid)).c_str(),
-			GENERIC_WRITE,
-			0,
-			NULL,
-			CREATE_ALWAYS,
-			FILE_FLAG_WRITE_THROUGH,
-			NULL);
+		const HANDLE fileHandle = 
+			CreateFileW(
+				(L"dummy\\" + std::to_wstring(fid)).c_str(),
+				GENERIC_WRITE,
+				0,
+				NULL,
+				CREATE_ALWAYS,
+				FILE_FLAG_WRITE_THROUGH,
+				NULL);
 
 		BYTE* buffer = static_cast<BYTE*>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, fileByteSize));
-
-		// Write compute time to file.
 		memcpy(buffer, &fileComputeTime, sizeof(UINT));
 
 		if (FALSE == WriteFile(fileHandle, buffer, fileByteSize, NULL, NULL))
-			ExitProcess(-5);
+			THROW_ERROR(L"Failed to call WriteFile.");
 
 		CloseHandle(fileHandle);
 		HeapFree(GetProcessHeap(), MEM_RELEASE, buffer);
