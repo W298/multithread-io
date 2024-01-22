@@ -1,7 +1,7 @@
 # multithread-io
 
 Multithread I/O simulation on Windows API.  
-Mainly focus on testing multithread & overlapped I/O on various enviornment (number of files, file size, computation time...)
+Mainly focus on testing multithread & overlapped I/O on various enviornment (number of files, file size, compute time...)
 
 All test result and analyze is located at [description page](https://github.com/W298/multithread-io/blob/main/docs/Description.md)
 
