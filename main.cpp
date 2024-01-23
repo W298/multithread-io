@@ -42,8 +42,8 @@ void RunTest(const UINT testCount, const UINT testFileCount, const TestArgument 
 		printf("\
 Peak memory: %.2f MiB\n\
 Elapsed time: %.2f ms\n\n",
-res.PeakMemory / (1024.0 * 1024.0),
-res.ElapsedTime);
+			res.PeakMemory / (1024.0 * 1024.0),
+			res.ElapsedTime);
 	}
 
 	// Summarize test results.
@@ -57,24 +57,24 @@ Total file size: %.2f MiB\n\n\
 Thread count: %d\n\
 -- READCALL_ONLY(%d) / COMPUTE_ONLY(%d) / COMPUTE_AND_READCALL(%d) / READCALL_AND_COMPUTE(%d)\n\n\
 Simulation type: %s\n\n",
-fileGenArgs->FileSizeModel == 0 ? "IDENTICAL" : fileGenArgs->FileSizeModel == 1 ? "NORMAL_DIST" : "EXP",
-fileGenArgs->FileSize.MinByte / 1024.0,
-fileGenArgs->FileSize.MaxByte / 1024.0,
-fileGenArgs->FileSize.Mean / 1024.0,
-fileGenArgs->FileSize.Variance / 1024.0,
-fileGenArgs->FileCompute.MinMicroSeconds / 1024.0,
-fileGenArgs->FileCompute.MaxMicroSeconds / 1024.0,
-fileGenArgs->FileCompute.Mean / 1024.0,
-fileGenArgs->FileCompute.Variance / 1024.0,
-testFileCount,
-totalFileSize / (1024.0 * 1024.0),
-args.ThreadCount,
-args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[0],
-args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[1],
-args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[2],
-args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[3],
-args.SimType == SIM_MANUAL_TASK_THREAD ? "SIM_MANUAL_TASK_THREAD" :
-	args.SimType == SIM_ROLE_SPECIFIED_THREAD ? "SIM_ROLE_SPECIFIED_THREAD" :
+		fileGenArgs->FileSizeModel == 0 ? "IDENTICAL" : fileGenArgs->FileSizeModel == 1 ? "NORMAL_DIST" : "EXP",
+		fileGenArgs->FileSize.MinByte / 1024.0,
+		fileGenArgs->FileSize.MaxByte / 1024.0,
+		fileGenArgs->FileSize.Mean / 1024.0,
+		fileGenArgs->FileSize.Variance / 1024.0,
+		fileGenArgs->FileCompute.MinMicroSeconds / 1024.0,
+		fileGenArgs->FileCompute.MaxMicroSeconds / 1024.0,
+		fileGenArgs->FileCompute.Mean / 1024.0,
+		fileGenArgs->FileCompute.Variance / 1024.0,
+		testFileCount,
+		totalFileSize / (1024.0 * 1024.0),
+		args.ThreadCount,
+		args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[0],
+		args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[1],
+		args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[2],
+		args.ThreadRoleAry == NULL ? 0 : args.ThreadRoleAry[3],
+		args.SimType == SIM_MANUAL_TASK_THREAD ? "SIM_MANUAL_TASK_THREAD" :
+		args.SimType == SIM_ROLE_SPECIFIED_THREAD ? "SIM_ROLE_SPECIFIED_THREAD" :
 		args.SimType == SIM_SYNC_THREAD ? "SIM_SYNC_THREAD" : "SIM_MMAP_THREAD");
 
 	elapsedTimeMean /= testCount;
@@ -133,13 +133,13 @@ int main()
 
 	TestArgument args =
 	{
-		SIM_SYNC_THREAD,							// Simulation type
-		testFileCount,							// Number of files to test
-		threadCount,							// Number of threads
-		threadRoleAry,							// Role of thread
-		testFileCount,							// ReadCall task limit
-		testFileCount,							// Compute task limit
-		TRUE									// Use defined compute time?
+		SIM_ROLE_SPECIFIED_THREAD,							// Simulation type
+		testFileCount,										// Number of files to test
+		threadCount,										// Number of threads
+		threadRoleAry,										// Role of thread
+		testFileCount,										// ReadCall task limit
+		testFileCount,										// Compute task limit
+		TRUE												// Use defined compute time?
 	};
 
 	RunTest(testCount, testFileCount, args);

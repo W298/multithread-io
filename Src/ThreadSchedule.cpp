@@ -26,13 +26,13 @@ TestResult g_testResult;
 
 // Status.
 TaskMode g_taskMode;
-UINT g_completeFileCount;
+UINT g_completeFileCount;		// How much files are completed?
 
 // Thread works.
 HANDLE g_globalTaskQueue;		// Queue that store ReadCall tasks.
 HANDLE g_globalWaitingQueue;	// Queue that store Compute tasks.
 HANDLE* g_threadHandleAry;
-HANDLE* g_threadIocpAry;
+HANDLE* g_threadIocpAry;		// Queue that store tasks that should be completed by each thread.
 
 // SRW locks.
 SRWLOCK g_srwFileStatus;
@@ -43,7 +43,7 @@ SRWLOCK g_srwFileBuffer;
 SRWLOCK g_srwFileFinish;
 SRWLOCK g_srwTaskMode;
 
-// File cache data.
+// Shared resources.
 std::unordered_map<UINT, UINT> g_fileStatusMap;
 std::unordered_map<UINT, FileLock*> g_fileLockMap;
 std::unordered_map<UINT, HANDLE> g_fileHandleMap;
@@ -235,7 +235,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	}
 	else
 	{
-		// Calculate checksum.
+		// Calculate checksum with count limit.
 		for (int x = 0; x < g_computeLoopCount; x++)
 		{
 			int checkSum = 0;
@@ -260,6 +260,7 @@ void ThreadSchedule::ComputeTaskWork(const UINT fid)
 	SPAN_START(2, _T("Release (%d)"), fid);
 #endif
 
+	// Release resources.
 	if (bufferAddress != nullptr)
 		VirtualFree(bufferAddress, 0, MEM_RELEASE);
 
@@ -362,7 +363,7 @@ void ThreadSchedule::MMAPTaskWork(UINT fid)
 
 	BYTE* ptr = (BYTE*)mapView;
 
-	// Calculate checksum.
+	// Calculate checksum with count limit.
 	for (int x = 0; x < g_computeLoopCount; x++)
 	{
 		int checkSum = 0;
@@ -385,6 +386,7 @@ void ThreadSchedule::MMAPTaskWork(UINT fid)
 	SPAN_END;
 #endif
 
+	// Release resources.
 	UnmapViewOfFile(mapView);
 	SAFE_CLOSE_HANDLE(mapHandle);
 	SAFE_CLOSE_HANDLE(fileHandle);
@@ -491,7 +493,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 	}
 	else
 	{
-		// Calculate checksum.
+		// Calculate checksum with count limit.
 		for (int x = 0; x < g_computeLoopCount; x++)
 		{
 			int checkSum = 0;
@@ -515,6 +517,7 @@ void ThreadSchedule::SyncTaskWork(UINT fid)
 	SPAN_END;
 #endif
 
+	// Release resources.
 	VirtualFree(fileBuffer, 0, MEM_RELEASE);
 	SAFE_CLOSE_HANDLE(fileHandle);
 
@@ -574,7 +577,7 @@ DWORD ThreadSchedule::HandleLockAcquireFailure(const UINT fid, const UINT thread
 	return WAIT_TIMEOUT;
 }
 
-void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskType)
+void ThreadSchedule::DoThreadTaskManual(ThreadTaskArgs* args, const UINT threadTaskType)
 {
 #ifdef _DEBUG
 	SERIES_INIT(std::to_wstring(GetCurrentThreadId()).c_str());
@@ -609,6 +612,7 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskTyp
 	SPAN_START(threadTaskType, format, fid);
 #endif
 
+	// Do task with thread type.
 	switch (threadTaskType)
 	{
 	case THREAD_TASK_READ_CALL:
@@ -632,6 +636,7 @@ void ThreadSchedule::DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskTyp
 
 	if (threadTaskType < THREAD_TASK_COMPUTE)
 	{
+		// Release lock. Next task can be entered now.
 		ReleaseSemaphore(fileSemAry[threadTaskType + 1], 1, NULL);
 
 		AcquireSRWLockExclusive(&g_srwFileStatus);
@@ -664,7 +669,7 @@ DWORD WINAPI ThreadSchedule::ManualThreadFunc(const LPVOID param)
 				return 0;
 
 			ThreadTaskArgs* args = reinterpret_cast<ThreadTaskArgs*>(lpov);
-			DoThreadTask(args, static_cast<UINT>(key));
+			DoThreadTaskManual(args, static_cast<UINT>(key));
 		}
 	}
 
@@ -857,7 +862,7 @@ TestResult ThreadSchedule::StartTest(TestArgument args)
 
 	InitializeSRWLock(&g_srwFileFinish);
 
-	// Initialize global IOCP.
+	// Initialize global IOCP if needed.
 	if (g_testArgs.SimType == SIM_ROLE_SPECIFIED_THREAD)
 	{
 		g_globalTaskQueue = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, g_testArgs.ThreadCount);
@@ -937,6 +942,7 @@ TestResult ThreadSchedule::StartTest(TestArgument args)
 	switch (g_testArgs.SimType)
 	{
 	case SIM_MANUAL_TASK_THREAD:
+		// Bind tasks manually.
 		for (UINT i = 0; i < args.TestFileCount; i++)
 		{
 			PostThreadTask(i % g_testArgs.ThreadCount, i, THREAD_TASK_READ_CALL);
@@ -948,6 +954,7 @@ TestResult ThreadSchedule::StartTest(TestArgument args)
 	case SIM_ROLE_SPECIFIED_THREAD:
 	case SIM_SYNC_THREAD:
 	case SIM_MMAP_THREAD:
+		// Just put tasks into Task Queue.
 		for (UINT i = 0; i < args.TestFileCount; i++)
 		{
 			OVERLAPPED ov = { 0 };
@@ -971,7 +978,7 @@ TestResult ThreadSchedule::StartTest(TestArgument args)
 	SPAN_END;
 #endif
 
-	// Release cached data.
+	// Release shared resources.
 	for (UINT i = 0; i < g_fileLockMap.size(); i++)
 		delete g_fileLockMap[i];
 

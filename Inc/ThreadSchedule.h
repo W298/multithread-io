@@ -17,6 +17,8 @@ namespace ThreadSchedule
 		THREAD_TASK_COMPUTE
 	};
 
+	// Define file status. Needs lock.
+	// Only used when simulation type is MANUAL.
 	enum FileStatusType
 	{
 		FILE_STATUS_READ_CALL_TASK_WAITING,
@@ -80,15 +82,11 @@ namespace ThreadSchedule
 			{
 				semLock[i] = 
 					CreateSemaphoreW(
-						NULL, 
-						i == 0, 
-						1, 
+						NULL, i == 0, 1, 
 						(std::to_wstring(fid) + L"-sem" + std::to_wstring(i)).c_str());
 				taskEndEvent[i] = 
 					CreateEvent(
-						NULL, 
-						TRUE, 
-						FALSE, 
+						NULL, TRUE, FALSE, 
 						(std::to_wstring(fid) + L"-taskEndEv" + std::to_wstring(i)).c_str());
 			}
 		}
@@ -140,7 +138,9 @@ namespace ThreadSchedule
 	
 	// Do tasks with task type.
 	// Only used when simulation type is MANUAL.
-	void DoThreadTask(ThreadTaskArgs* args, const UINT threadTaskType);
+	void DoThreadTaskManual(ThreadTaskArgs* args, const UINT threadTaskType);
+
+	void DoThreadTaskRoleSpecified(UINT fid, ThreadTaskType type);
 
 	DWORD WINAPI ManualThreadFunc(LPVOID param);
 	DWORD WINAPI RoleSpecifiedThreadFunc(LPVOID param);
